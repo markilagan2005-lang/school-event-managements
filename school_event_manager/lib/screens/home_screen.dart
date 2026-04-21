@@ -1638,15 +1638,16 @@ class _FacultyAttendanceTabState extends ConsumerState<FacultyAttendanceTab> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (attendance) {
-        final courses = attendance
+        final mineByCheckoutFaculty = attendance.where((r) => r.checkedOutByFacultyId == widget.user.id).toList();
+        final courses = mineByCheckoutFaculty
             .map((r) => r.studentCourse)
             .where((c) => c.trim().isNotEmpty)
             .toSet()
             .toList()
           ..sort();
         final filtered = _courseFilter == 'All'
-            ? attendance
-            : attendance.where((r) => r.studentCourse == _courseFilter).toList();
+            ? mineByCheckoutFaculty
+            : mineByCheckoutFaculty.where((r) => r.studentCourse == _courseFilter).toList();
         final sorted = [...filtered]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
         return RefreshIndicator(

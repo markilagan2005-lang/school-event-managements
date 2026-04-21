@@ -346,17 +346,9 @@ app.get('/api/attendance', authenticateToken, (req, res) => {
     return res.json(all.filter(a => a.userId === req.user.id || a.studentId === req.user.username));
   }
   if (req.user.role === 'faculty') {
-    // Faculty should only see closed records (checked out or timeout), not active check-ins.
+    // Faculty sees only closed records that this faculty handled at checkout/timeout.
     return res.json(
-      all.filter(a => {
-        if (!a.checkOutAt) return false;
-        if ((a.status || '').toLowerCase() === 'timeout') {
-          // Timeouts belong to the faculty who handled check-in/out.
-          return a.checkedOutByFacultyId === req.user.id || a.checkedInByFacultyId === req.user.id;
-        }
-        // Normal checkout: show only records checked out by this faculty.
-        return a.checkedOutByFacultyId === req.user.id;
-      }),
+      all.filter(a => a.checkOutAt && a.checkedOutByFacultyId === req.user.id),
     );
   }
   res.json(all);
@@ -386,6 +378,11 @@ setInterval(() => {
         if (Number.isFinite(start) && now - start > ATTENDANCE_TIMEOUT_MIN * 60 * 1000) {
           a.checkOutAt = new Date(start + ATTENDANCE_TIMEOUT_MIN * 60 * 1000).toISOString();
           a.status = 'timeout';
+          // Assign timeout ownership so faculty filtering stays strict and deterministic.
+          if (!a.checkedOutByFacultyId) {
+            a.checkedOutByFacultyId = a.checkedInByFacultyId || '';
+            a.checkedOutByFacultyName = a.checkedInByFacultyName || '';
+          }
           changed = true;
         }
       }
