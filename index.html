@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School Event Management System</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="/node_modules/jsqr/dist/jsQR.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏫 School Event Management with QR Attendance</h1>
+            <div id="user-info" style="display:none;">
+                <span id="username-display"></span>
+                <button id="logout-btn" class="tab-btn">Logout</button>
+            </div>
+        </header>
+
+        <nav class="tabs" id="main-tabs" style="display:none;">
+            <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-btn" data-tab="events">Events</button>
+            <button class="tab-btn" data-tab="attendees">Attendees</button>
+            <button class="tab-btn" data-tab="scanner">QR Scanner</button>
+        </nav>
+
+        <main>
+            <!-- Login Lobby -->
+            <div id="login-lobby" style="display:block;">
+                <!-- Login Section -->
+                <div id="login-section">
+                    <h2>🔐 Login</h2>
+                    <form id="login-form">
+                        <input type="text" id="login-username" placeholder="Username" required>
+                        <input type="password" id="login-password" placeholder="Password" required>
+                        <button type="submit">Login</button>
+                    </form>
+                    <p id="login-error" style="color:red;"></p>
+                    <p><em>No account? <button type="button" id="show-register" style="background:none;border:none;color:#007bff;cursor:pointer;">Create Account</button></em></p>
+                </div>
+
+                <!-- Register Section -->
+                <div id="register-section" style="display:none;">
+                    <h2>👤 Create Account</h2>
+                    <form id="register-form">
+                        <input type="text" id="register-username" placeholder="Username" required>
+                        <input type="password" id="register-password" placeholder="Password" required>
+                        <select id="register-role" required>
+                            <option value="">Select Role</option>
+                            <option value="student">Student</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                        <button type="submit">Create Account</button>
+                    </form>
+                    <p id="register-error" style="color:red;"></p>
+                    <p><em>Have account? <button type="button" id="show-login" style="background:none;border:none;color:#007bff;cursor:pointer;">Login</button></em></p>
+                </div>
+            </div>
+
+            <!-- Events Tab -->
+            <div id="events" class="tab-content">
+                <h2>📅 Manage Events</h2>
+                <form id="event-form">
+                    <input type="text" id="event-name" placeholder="Event Name" required>
+                    <input type="date" id="event-date" required>
+                    <button type="submit">Add Event</button>
+                </form>
+                <ul id="events-list"></ul>
+            </div>
+
+            <!-- Attendees Tab -->
+            <div id="attendees" class="tab-content">
+                <h2>📌 Event QR</h2>
+                <form id="attendee-form" data-event-id="">
+                    <button type="submit">Generate QR</button>
+                </form>
+                <div id="qr-canvas-container" style="display:none;">
+                    <h3>QR Code</h3>
+                    <img id="qr-image" alt="QR Code" style="max-width:200px;display:none;" />
+                    <canvas id="qr-canvas"></canvas>
+                    <p id="qr-text"></p>
+                </div>
+                <ul id="attendees-list"></ul>
+            </div>
+
+            <!-- Scanner Tab -->
+            <div id="scanner" class="tab-content">
+                <h2>📱 QR Scanner</h2>
+                <select id="scan-event-select"></select>
+                <video id="video" style="width:100%;max-width:400px;height:auto;" autoplay muted playsinline></video>
+                <canvas id="canvas" style="display:none;"></canvas>
+                <p id="scan-result"></p>
+                <button id="start-scan">Start Scanner</button>
+            </div>
+
+            <!-- Dashboard Tab -->
+            <div id="dashboard" class="tab-content active">
+                <h2>📊 Dashboard</h2>
+                <div id="stats" style="display:flex;gap:1rem;margin-bottom:1rem;"></div>
+                <table id="attendance-table">
+                    <thead>
+                        <tr>
+                            <th>Event</th>
+                            <th>Student</th>
+                            <th>ID</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+    <script src="app.js?v=20260406"></script>
+</body>
+</html>
+
