@@ -49,7 +49,17 @@ const requireAdmin = (req, res, next) => {
 // Routes
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, route: '/api/health' });
+});
+
+// Convenience health alias for quick manual checks.
+app.get('/health', (req, res) => {
+  res.json({ ok: true, route: '/health' });
+});
+
+// Friendly root response so service URL checks don't look broken.
+app.get('/', (req, res) => {
+  res.json({ ok: true, message: 'School Event API is running' });
 });
 
 // Register
