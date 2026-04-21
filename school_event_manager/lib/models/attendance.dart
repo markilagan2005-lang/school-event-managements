@@ -54,6 +54,15 @@ class AttendanceRecord {
         'checkedOutByFacultyName': checkedOutByFacultyName,
       };
 
+  static DateTime _toLocal(DateTime dt) => dt.isUtc ? dt.toLocal() : dt;
+
+  static DateTime? _parseDate(dynamic raw) {
+    if (raw == null) return null;
+    final parsed = DateTime.tryParse(raw.toString());
+    if (parsed == null) return null;
+    return _toLocal(parsed);
+  }
+
   factory AttendanceRecord.fromJson(Map<String, dynamic> json) => AttendanceRecord(
         id: json['id'] ?? '',
         eventId: json['eventId'] ?? '',
@@ -63,9 +72,9 @@ class AttendanceRecord {
         studentCourse: json['studentCourse'] ?? '',
         studentSection: json['studentSection'] ?? '',
         status: json['status'] ?? 'present',
-        timestamp: DateTime.tryParse(json['timestamp'] ?? json['checkInAt'] ?? '') ?? DateTime.now(),
-        checkInAt: DateTime.tryParse(json['checkInAt'] ?? json['timestamp'] ?? ''),
-        checkOutAt: DateTime.tryParse(json['checkOutAt'] ?? ''),
+        timestamp: _parseDate(json['timestamp'] ?? json['checkInAt']) ?? DateTime.now(),
+        checkInAt: _parseDate(json['checkInAt'] ?? json['timestamp']),
+        checkOutAt: _parseDate(json['checkOutAt']),
         userId: json['userId'] ?? '',
         checkedInByFacultyId: json['checkedInByFacultyId'] ?? '',
         checkedInByFacultyName: json['checkedInByFacultyName'] ?? '',

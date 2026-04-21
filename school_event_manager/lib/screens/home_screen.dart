@@ -1485,10 +1485,8 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
 
   Future<String?> _pickFacultyForThisScan(BuildContext context, String eventId, String studentId) async {
     final attendanceNotifier = ref.read(attendanceProvider.notifier);
-    final existing = ref.read(attendanceProvider).value;
-    if (existing == null) {
-      await attendanceNotifier.loadAttendance();
-    }
+    // Always reload before deciding stage so second scan reliably shows Check-out.
+    await attendanceNotifier.loadAttendance();
     final list = ref.read(attendanceProvider).value ?? const <AttendanceRecord>[];
     final now = DateTime.now();
     final open = list.where((r) {

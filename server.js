@@ -346,7 +346,18 @@ app.get('/api/attendance', authenticateToken, (req, res) => {
     return res.json(all.filter(a => a.userId === req.user.id || a.studentId === req.user.username));
   }
   if (req.user.role === 'faculty') {
-    return res.json(all.filter(a => a.checkedInByFacultyId === req.user.id || a.checkedOutByFacultyId === req.user.id));
+    // Faculty should only see closed records (checked out or timeout), not active check-ins.
+    return res.json(
+      all.filter(a => {
+        if (!a.checkOutAt) return false;
+        if ((a.status || '').toLowerCase() === 'timeout') {
+          // Timeouts belong to the faculty who handled check-in/out.
+          return a.checkedOutByFacultyId === req.user.id || a.checkedInByFacultyId === req.user.id;
+        }
+        // Normal checkout: show only records checked out by this faculty.
+        return a.checkedOutByFacultyId === req.user.id;
+      }),
+    );
   }
   res.json(all);
 });
