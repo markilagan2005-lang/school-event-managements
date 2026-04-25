@@ -30,6 +30,14 @@ app.use(express.static('.'));
 // Load data
 const loadData = (file) => fs.readJsonSync(file, { throws: false }) || [];
 const saveData = (file, data) => fs.writeJsonSync(file, data, { spaces: 2 });
+const normalizeStudentId = (value) => String(value || '').trim().toLowerCase();
+const hasDuplicateStudentId = (users, studentId, exceptUserId = null) => {
+  const normalized = normalizeStudentId(studentId);
+  if (!normalized) return false;
+  return users.some(
+    (u) => u.id !== exceptUserId && normalizeStudentId(u.studentId) === normalized,
+  );
+};
 
 const ensureDefaultAdmin = () => {
   const users = loadData(usersFile);
@@ -120,6 +128,9 @@ app.post('/api/register', (req, res) => {
     if (!fullName || !studentId || !course || !section) {
       return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
     }
+  }
+  if (hasDuplicateStudentId(users, studentId)) {
+    return res.status(400).json({ error: 'This ID is already have' });
   }
   
   const newUser = {
@@ -506,6 +517,9 @@ app.post('/api/users', authenticateToken, requireAdmin, (req, res) => {
   }
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
     return res.status(400).json({ error: 'Username exists' });
+  }
+  if (hasDuplicateStudentId(users, studentId)) {
+    return res.status(400).json({ error: 'This ID is already have' });
   }
   const u = { id: uuidv4(), username, password, role, fullName: fullName || '', studentId: studentId || '', course: course || '', section: section || '' };
   users.push(u);
