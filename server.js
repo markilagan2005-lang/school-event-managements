@@ -17,6 +17,9 @@ const usersFile = path.join(dataDir, 'users.json');
 const eventsFile = path.join(dataDir, 'events.json');
 const attendanceFile = path.join(dataDir, 'attendance.json');
 const ATTENDANCE_TIMEOUT_MIN = parseInt(process.env.ATT_TIMEOUT_MIN || '60', 10);
+const DEFAULT_ADMIN_USERNAME = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
+const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || '@LCCADMIN2026';
+const DEFAULT_ADMIN_FULLNAME = process.env.DEFAULT_ADMIN_FULLNAME || 'System Admin';
 
 // Middleware
 app.set('trust proxy', 1);
@@ -27,6 +30,43 @@ app.use(express.static('.'));
 // Load data
 const loadData = (file) => fs.readJsonSync(file, { throws: false }) || [];
 const saveData = (file, data) => fs.writeJsonSync(file, data, { spaces: 2 });
+
+const ensureDefaultAdmin = () => {
+  const users = loadData(usersFile);
+  const username = String(DEFAULT_ADMIN_USERNAME).trim();
+  if (!username) return;
+
+  let changed = false;
+  const existing = users.find(u => String(u.username).toLowerCase() === username.toLowerCase());
+  if (!existing) {
+    users.push({
+      id: uuidv4(),
+      username,
+      password: DEFAULT_ADMIN_PASSWORD,
+      role: 'admin',
+      fullName: DEFAULT_ADMIN_FULLNAME,
+      studentId: '',
+      course: '',
+      section: '',
+    });
+    changed = true;
+  } else {
+    if (existing.role !== 'admin') {
+      existing.role = 'admin';
+      changed = true;
+    }
+    if (existing.password !== DEFAULT_ADMIN_PASSWORD) {
+      existing.password = DEFAULT_ADMIN_PASSWORD;
+      changed = true;
+    }
+    if (!existing.fullName) {
+      existing.fullName = DEFAULT_ADMIN_FULLNAME;
+      changed = true;
+    }
+  }
+
+  if (changed) saveData(usersFile, users);
+};
 
 // Auth middleware
 const authenticateToken = (req, res, next) => {
@@ -115,8 +155,25 @@ app.post('/api/register', (req, res) => {
 // Login
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  const users = loadData(usersFile);
-  const user = users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase());
+  let users = loadData(usersFile);
+  let user = users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase());
+
+  // Safety fallback: if default admin is missing in persisted data, recreate it.
+  if (!user && String(username).toLowerCase() === String(DEFAULT_ADMIN_USERNAME).toLowerCase()) {
+    users.push({
+      id: uuidv4(),
+      username: DEFAULT_ADMIN_USERNAME,
+      password: DEFAULT_ADMIN_PASSWORD,
+      role: 'admin',
+      fullName: DEFAULT_ADMIN_FULLNAME,
+      studentId: '',
+      course: '',
+      section: '',
+    });
+    saveData(usersFile, users);
+    user = users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase());
+  }
+
   if (!user) return res.status(401).json({ error: 'Username not found' });
   if (user.password !== password) return res.status(401).json({ error: 'Wrong password' });
   
@@ -485,5 +542,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
+  ensureDefaultAdmin();
   console.log(`Server running at http://localhost:${PORT}`);
 });
