@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
-import '../services/api_client.dart';
-import '../config.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -162,14 +160,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           ],
                         ),
-                        if (!lockServerSettings) ...[
-                          const SizedBox(height: 4),
-                          OutlinedButton.icon(
-                            onPressed: () => _showServerDialog(context),
-                            icon: const Icon(Icons.settings),
-                            label: const Text('Server Settings'),
-                          ),
-                        ],
                       ],
                     ),
                   ),
@@ -282,7 +272,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 decoration: const InputDecoration(labelText: 'Role'),
                 items: const [
                   DropdownMenuItem(value: 'student', child: Text('Student')),
-                  DropdownMenuItem(value: 'admin', child: Text('Admin')),
                   DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
                 ],
                 onChanged: (value) {
@@ -349,31 +338,4 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Future<void> _showServerDialog(BuildContext context) async {
-    final base = await ApiClient.getBaseUrl();
-    if (!context.mounted) return;
-    final controller = TextEditingController(text: base);
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Server Base URL'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: 'http://<your-ip>:3000/api',
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              await ApiClient.setBaseUrl(controller.text.trim());
-              if (context.mounted) Navigator.pop(context);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
 }

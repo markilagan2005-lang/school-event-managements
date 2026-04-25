@@ -73,8 +73,8 @@ app.post('/api/register', (req, res) => {
   if (users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase())) {
     return res.status(400).json({ error: 'Username already exists' });
   }
-  if (!['student', 'admin', 'faculty'].includes(role)) {
-    return res.status(400).json({ error: 'Invalid role' });
+  if (!['student', 'faculty'].includes(role)) {
+    return res.status(400).json({ error: 'Public registration is only for student/faculty' });
   }
   if (role === 'student') {
     if (!fullName || !studentId || !course || !section) {
