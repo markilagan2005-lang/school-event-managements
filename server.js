@@ -403,9 +403,16 @@ app.get('/api/attendance', authenticateToken, (req, res) => {
     return res.json(all.filter(a => a.userId === req.user.id || a.studentId === req.user.username));
   }
   if (req.user.role === 'faculty') {
-    // Faculty sees only closed records that this faculty handled at checkout/timeout.
+    // Faculty sees:
+    // 1) open check-ins handled by this faculty
+    // 2) closed records checked out by this faculty
     return res.json(
-      all.filter(a => a.checkOutAt && a.checkedOutByFacultyId === req.user.id),
+      all.filter(a => {
+        if (!a.checkOutAt) {
+          return a.checkedInByFacultyId === req.user.id;
+        }
+        return a.checkedOutByFacultyId === req.user.id;
+      }),
     );
   }
   res.json(all);
