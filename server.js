@@ -1,4 +1,4 @@
-const express = require('express');
+ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
@@ -6,20 +6,27 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs-extra');
 const path = require('path');
 const qrcode = require('qrcode');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'school-event-secret-key-change-in-prod';
+const fileToCollection = new Map();
 
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 fs.ensureDirSync(dataDir);
 const usersFile = path.join(dataDir, 'users.json');
 const eventsFile = path.join(dataDir, 'events.json');
 const attendanceFile = path.join(dataDir, 'attendance.json');
+fileToCollection.set(usersFile, 'users');
+fileToCollection.set(eventsFile, 'events');
+fileToCollection.set(attendanceFile, 'attendance');
 const ATTENDANCE_TIMEOUT_MIN = parseInt(process.env.ATT_TIMEOUT_MIN || '60', 10);
 const DEFAULT_ADMIN_USERNAME = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || '@LCCADMIN2026';
 const DEFAULT_ADMIN_FULLNAME = process.env.DEFAULT_ADMIN_FULLNAME || 'System Admin';
+const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'attendify';
 
 // Middleware
 app.set('trust proxy', 1);
@@ -27,9 +34,70 @@ app.use(cors({ origin: '*' }));
 app.use(bodyParser.json());
 app.use(express.static('.')); 
 
-// Load data
+// Storage (JSON files + optional MongoDB mirror)
+let mongoClient = null;
+let mongoDb = null;
+const writeChains = new Map();
+
+const cleanMongoDoc = (doc) => {
+  if (!doc || typeof doc !== 'object') return doc;
+  const { _id, ...rest } = doc;
+  return rest;
+};
+
 const loadData = (file) => fs.readJsonSync(file, { throws: false }) || [];
-const saveData = (file, data) => fs.writeJsonSync(file, data, { spaces: 2 });
+
+const enqueueMongoWrite = (collectionName, data) => {
+  if (!mongoDb || !collectionName) return;
+  const prev = writeChains.get(collectionName) || Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(async () => {
+      const col = mongoDb.collection(collectionName);
+      await col.deleteMany({});
+      if (Array.isArray(data) && data.length > 0) {
+        await col.insertMany(data);
+      }
+    })
+    .catch((err) => {
+      console.error(`[mongo] Failed to sync ${collectionName}:`, err?.message || err);
+    });
+  writeChains.set(collectionName, next);
+};
+
+const saveData = (file, data) => {
+  fs.writeJsonSync(file, data, { spaces: 2 });
+  const collectionName = fileToCollection.get(file);
+  enqueueMongoWrite(collectionName, data);
+};
+
+const syncCollectionFromMongoIfAny = async (file, collectionName) => {
+  if (!mongoDb) return;
+  const col = mongoDb.collection(collectionName);
+  const docs = (await col.find({}).toArray()).map(cleanMongoDoc);
+  if (docs.length > 0) {
+    fs.writeJsonSync(file, docs, { spaces: 2 });
+    return;
+  }
+  const local = loadData(file);
+  if (local.length > 0) {
+    await col.insertMany(local);
+  }
+};
+
+const initializeMongoMirror = async () => {
+  if (!MONGODB_URI) {
+    console.log('[mongo] MONGODB_URI not set, using JSON file storage only.');
+    return;
+  }
+  mongoClient = new MongoClient(MONGODB_URI);
+  await mongoClient.connect();
+  mongoDb = mongoClient.db(MONGODB_DB_NAME);
+  console.log(`[mongo] Connected (${MONGODB_DB_NAME}).`);
+  await syncCollectionFromMongoIfAny(usersFile, 'users');
+  await syncCollectionFromMongoIfAny(eventsFile, 'events');
+  await syncCollectionFromMongoIfAny(attendanceFile, 'attendance');
+};
 const normalizeStudentId = (value) => String(value || '').trim().toLowerCase();
 const hasDuplicateStudentId = (users, studentId, exceptUserId = null) => {
   const normalized = normalizeStudentId(studentId);
@@ -38,6 +106,25 @@ const hasDuplicateStudentId = (users, studentId, exceptUserId = null) => {
     (u) => u.id !== exceptUserId && normalizeStudentId(u.studentId) === normalized,
   );
 };
+const hasDuplicateUserId = (users, userId, exceptUserId = null) => {
+  const normalized = String(userId || '').trim();
+  if (!normalized) return false;
+  return users.some((u) => u.id !== exceptUserId && String(u.id) === normalized);
+};
+const isFacultyApproved = (user) => {
+  if (!user || user.role !== 'faculty') return true;
+  return user.isApproved === true;
+};
+const toPublicUser = (u) => ({
+  id: u.id,
+  username: u.username,
+  role: u.role,
+  fullName: u.fullName || '',
+  studentId: u.studentId || '',
+  course: u.course || '',
+  section: u.section || '',
+  isApproved: isFacultyApproved(u),
+});
 
 const ensureDefaultAdmin = () => {
   const users = loadData(usersFile);
@@ -56,6 +143,7 @@ const ensureDefaultAdmin = () => {
       studentId: '',
       course: '',
       section: '',
+      isApproved: true,
     });
     changed = true;
   } else {
@@ -71,6 +159,10 @@ const ensureDefaultAdmin = () => {
       existing.fullName = DEFAULT_ADMIN_FULLNAME;
       changed = true;
     }
+    if (existing.isApproved !== true) {
+      existing.isApproved = true;
+      changed = true;
+    }
   }
 
   if (changed) saveData(usersFile, users);
@@ -84,7 +176,17 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid token' });
-    req.user = user;
+    const users = loadData(usersFile);
+    const account = users.find((u) => u.id === user.id);
+    if (!account) return res.status(401).json({ error: 'Account not found' });
+    if (!isFacultyApproved(account)) {
+      return res.status(403).json({ error: 'Faculty account is pending admin approval' });
+    }
+    req.user = {
+      id: account.id,
+      username: account.username,
+      role: account.role,
+    };
     next();
   });
 };
@@ -141,26 +243,54 @@ app.post('/api/register', (req, res) => {
     fullName: fullName || '',
     studentId: studentId || '',
     course: course || '',
-    section: section || ''
+    section: section || '',
+    isApproved: role === 'faculty' ? false : true,
   };
   
   users.push(newUser);
   saveData(usersFile, users);
-  
-  const token = jwt.sign({ id: newUser.id, username: newUser.username, role: newUser.role }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({
+
+  if (newUser.role === 'faculty') {
+    return res.json({
+      user: toPublicUser(newUser),
+      message: 'Faculty registration submitted. Wait for admin verification before login.',
+    });
+  }
+
+  const token = jwt.sign(
+    { id: newUser.id, username: newUser.username, role: newUser.role },
+    JWT_SECRET,
+    { expiresIn: '24h' },
+  );
+  return res.json({
     token,
-    user: {
-      id: newUser.id,
-      username: newUser.username,
-      role: newUser.role,
-      fullName: newUser.fullName || '',
-      studentId: newUser.studentId || '',
-      course: newUser.course || '',
-      section: newUser.section || ''
-    },
-    message: 'Account created'
+    user: toPublicUser(newUser),
+    message: 'Account created',
   });
+});
+
+// Self-service password reset from login screen (non-admin only).
+app.post('/api/reset-password', (req, res) => {
+  const { username, newPassword } = req.body;
+  if (!username || !newPassword) {
+    return res.status(400).json({ error: 'Username and new password are required' });
+  }
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const users = loadData(usersFile);
+  const idx = users.findIndex(
+    (u) => String(u.username).toLowerCase() === String(username).toLowerCase(),
+  );
+  if (idx === -1) return res.status(404).json({ error: 'Username not found' });
+  if (users[idx].role === 'admin') {
+    return res.status(403).json({ error: 'Admin password reset is restricted. Use admin panel.' });
+  }
+
+  users[idx].password = String(newPassword);
+  saveData(usersFile, users);
+  return res.json({ message: 'Password reset successful' });
 });
 
 // Login
@@ -187,20 +317,22 @@ app.post('/api/login', (req, res) => {
 
   if (!user) return res.status(401).json({ error: 'Username not found' });
   if (user.password !== password) return res.status(401).json({ error: 'Wrong password' });
+  if (!isFacultyApproved(user)) {
+    return res.status(403).json({ error: 'Faculty account is pending admin approval' });
+  }
   
   const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
   res.json({
     token,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      fullName: user.fullName || '',
-      studentId: user.studentId || '',
-      course: user.course || '',
-      section: user.section || ''
-    }
+    user: toPublicUser(user),
   });
+});
+
+app.get('/api/me', authenticateToken, (req, res) => {
+  const users = loadData(usersFile);
+  const account = users.find((u) => u.id === req.user.id);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  res.json({ user: toPublicUser(account) });
 });
 
 // Events
@@ -243,16 +375,8 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
 
 app.get('/api/faculty', authenticateToken, (req, res) => {
   const users = loadData(usersFile)
-    .filter(u => u.role === 'faculty')
-    .map(u => ({
-      id: u.id,
-      username: u.username,
-      role: u.role,
-      fullName: u.fullName || '',
-      studentId: u.studentId || '',
-      course: u.course || '',
-      section: u.section || ''
-    }));
+    .filter((u) => u.role === 'faculty' && isFacultyApproved(u))
+    .map(toPublicUser);
   res.json(users);
 });
 
@@ -492,15 +616,7 @@ app.get('/api/reports/attendance', authenticateToken, requireAdmin, (req, res) =
 });
 
 app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
-  const users = loadData(usersFile).map(u => ({
-    id: u.id,
-    username: u.username,
-    role: u.role,
-    fullName: u.fullName || '',
-    studentId: u.studentId || '',
-    course: u.course || '',
-    section: u.section || ''
-  }));
+  const users = loadData(usersFile).map(toPublicUser);
   res.json(users);
 });
 
@@ -521,25 +637,160 @@ app.post('/api/users', authenticateToken, requireAdmin, (req, res) => {
   if (hasDuplicateStudentId(users, studentId)) {
     return res.status(400).json({ error: 'This ID is already have' });
   }
-  const u = { id: uuidv4(), username, password, role, fullName: fullName || '', studentId: studentId || '', course: course || '', section: section || '' };
+  const u = {
+    id: uuidv4(),
+    username,
+    password,
+    role,
+    fullName: fullName || '',
+    studentId: studentId || '',
+    course: course || '',
+    section: section || '',
+    isApproved: true,
+  };
   users.push(u);
   saveData(usersFile, users);
-  res.json({ id: u.id, username: u.username, role: u.role, fullName: u.fullName || '', studentId: u.studentId || '', course: u.course || '', section: u.section || '' });
+  res.json(toPublicUser(u));
 });
 
 app.patch('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
   const users = loadData(usersFile);
   const idx = users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const { password, role } = req.body;
-  if (password) users[idx].password = password;
-  if (role && ['student','admin','faculty'].includes(role)) users[idx].role = role;
+  const isSelfUpdate = req.user && req.user.id === req.params.id;
+
+  const current = users[idx];
+  const next = { ...current };
+  const {
+    id: nextIdRaw,
+    username,
+    password,
+    role,
+    fullName,
+    studentId,
+    course,
+    section,
+    isApproved,
+  } = req.body || {};
+
+  const nextId = nextIdRaw == null ? current.id : String(nextIdRaw).trim();
+  if (isSelfUpdate && nextId !== current.id) {
+    return res.status(400).json({ error: 'You cannot change your own user ID' });
+  }
+  if (!nextId) return res.status(400).json({ error: 'User ID is required' });
+  if (hasDuplicateUserId(users, nextId, current.id)) {
+    return res.status(400).json({ error: 'User ID already exists' });
+  }
+  next.id = nextId;
+
+  if (username != null) {
+    const normalizedUsername = String(username).trim();
+    if (!normalizedUsername) return res.status(400).json({ error: 'Username is required' });
+    if (users.some((u) => u.id !== current.id && String(u.username).toLowerCase() === normalizedUsername.toLowerCase())) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+    next.username = normalizedUsername;
+  }
+
+  if (role != null) {
+    if (!['student', 'admin', 'faculty'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    if (current.role !== 'faculty' && role === 'faculty') {
+      next.isApproved = true;
+    }
+    if (role !== 'faculty') {
+      next.isApproved = true;
+    }
+    next.role = role;
+  }
+
+  if (fullName != null) next.fullName = String(fullName).trim();
+  if (studentId != null) next.studentId = String(studentId).trim();
+  if (course != null) next.course = String(course).trim();
+  if (section != null) next.section = String(section).trim();
+  if (password != null) {
+    if (!String(password)) return res.status(400).json({ error: 'Password is required' });
+    next.password = String(password);
+  }
+  if (isApproved != null) {
+    if (next.role !== 'faculty' && Boolean(isApproved) == false) {
+      return res.status(400).json({ error: 'Only faculty can be unapproved' });
+    }
+    next.isApproved = Boolean(isApproved);
+  }
+  if (next.role === 'faculty' && next.isApproved == null) {
+    next.isApproved = isFacultyApproved(current);
+  }
+  if (next.role !== 'faculty') {
+    next.isApproved = true;
+  }
+
+  if (hasDuplicateStudentId(users, next.studentId, current.id)) {
+    return res.status(400).json({ error: 'This ID is already have' });
+  }
+
+  if (next.role === 'student') {
+    if (!next.fullName || !next.studentId || !next.course || !next.section) {
+      return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
+    }
+  }
+
+  users[idx] = next;
+
+  // Keep attendance ownership consistent when admin edits IDs/student IDs.
+  if (next.id !== current.id || next.studentId !== current.studentId) {
+    const attendance = loadData(attendanceFile);
+    let changed = false;
+    for (const a of attendance) {
+      if (next.id !== current.id) {
+        if (a.userId === current.id) {
+          a.userId = next.id;
+          changed = true;
+        }
+        if (a.checkedInByFacultyId === current.id) {
+          a.checkedInByFacultyId = next.id;
+          changed = true;
+        }
+        if (a.checkedOutByFacultyId === current.id) {
+          a.checkedOutByFacultyId = next.id;
+          changed = true;
+        }
+      }
+      if (next.studentId !== current.studentId && next.studentId) {
+        if (a.userId === next.id || a.userId === current.id) {
+          a.studentId = next.studentId;
+          changed = true;
+        }
+      }
+    }
+    if (changed) saveData(attendanceFile, attendance);
+  }
+
   saveData(usersFile, users);
   const u = users[idx];
-  res.json({ id: u.id, username: u.username, role: u.role });
+  res.json(toPublicUser(u));
+});
+
+app.post('/api/users/:id/reset-password', authenticateToken, requireAdmin, (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword) return res.status(400).json({ error: 'New password is required' });
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const users = loadData(usersFile);
+  const idx = users.findIndex((u) => u.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  users[idx].password = String(newPassword);
+  saveData(usersFile, users);
+  return res.json({ message: 'Password reset successful' });
 });
 
 app.delete('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
+  if (req.user && req.user.id === req.params.id) {
+    return res.status(400).json({ error: 'You cannot delete your own account' });
+  }
   let users = loadData(usersFile);
   const before = users.length;
   users = users.filter(u => u.id !== req.params.id);
@@ -562,7 +813,16 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const start = async () => {
+  try {
+    await initializeMongoMirror();
+  } catch (err) {
+    console.error('[mongo] Initialization failed, continuing with file storage:', err?.message || err);
+  }
   ensureDefaultAdmin();
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
+};
+
+start();

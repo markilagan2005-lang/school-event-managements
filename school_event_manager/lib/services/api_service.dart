@@ -6,6 +6,17 @@ import '../models/attendance.dart';
 import 'api_client.dart';
 
 class ApiService {
+  static DateTime _toLocal(DateTime dt) => dt.isUtc ? dt.toLocal() : dt;
+
+  static DateTime? _parseDateTime(dynamic raw) {
+    if (raw == null) return null;
+    final parsed = DateTime.tryParse(raw.toString());
+    if (parsed == null) return null;
+    return _toLocal(parsed);
+  }
+
+  static String _toServerIso(DateTime dt) => dt.toUtc().toIso8601String();
+
   static Future<ApiClient> _client() async {
     final base = await ApiClient.getBaseUrl();
     return ApiClient(base);
@@ -31,8 +42,14 @@ class ApiService {
       if (section != null) 'section': section,
     });
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', res['token'] as String);
-    await prefs.setString('current_user', jsonEncode(res['user']));
+    final token = res['token']?.toString();
+    if (token != null && token.isNotEmpty) {
+      await prefs.setString('auth_token', token);
+      await prefs.setString('current_user', jsonEncode(res['user']));
+    } else {
+      await prefs.remove('auth_token');
+      await prefs.remove('current_user');
+    }
     return res;
   }
 
@@ -43,6 +60,30 @@ class ApiService {
     await prefs.setString('auth_token', res['token'] as String);
     await prefs.setString('current_user', jsonEncode(res['user']));
     return res;
+  }
+
+  static Future<Map<String, dynamic>> getMe() async {
+    final c = await _client();
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token == null || token.isEmpty) {
+      throw Exception('Not logged in');
+    }
+    final res = await c.getJsonMap('/me', token: token);
+    final user = res['user'];
+    if (user is! Map<String, dynamic>) {
+      throw Exception('Invalid /me response');
+    }
+    await prefs.setString('current_user', jsonEncode(user));
+    return user;
+  }
+
+  static Future<Map<String, dynamic>> resetPassword(String username, String newPassword) async {
+    final c = await _client();
+    return c.postJson('/reset-password', {
+      'username': username,
+      'newPassword': newPassword,
+    });
   }
 
   static Future<List<Event>> getEvents() async {
@@ -57,10 +98,10 @@ class ApiService {
       return Event(
         id: e['id'] ?? '',
         name: e['name'] ?? '',
-        date: DateTime.tryParse(e['date'] ?? '') ?? DateTime.now(),
+        date: _parseDateTime(e['date']) ?? DateTime.now(),
         status: e['status'] ?? 'open',
-        startAt: e['startAt'] == null ? null : DateTime.tryParse(e['startAt'].toString()),
-        endAt: e['endAt'] == null ? null : DateTime.tryParse(e['endAt'].toString()),
+        startAt: _parseDateTime(e['startAt']),
+        endAt: _parseDateTime(e['endAt']),
         attendees: attendees,
       );
     }).toList();
@@ -80,20 +121,20 @@ class ApiService {
       '/events',
       {
         'name': name,
-        'date': date.toIso8601String(),
+        'date': _toServerIso(date),
         'status': status,
-        if (startAt != null) 'startAt': startAt.toIso8601String(),
-        if (endAt != null) 'endAt': endAt.toIso8601String(),
+        if (startAt != null) 'startAt': _toServerIso(startAt),
+        if (endAt != null) 'endAt': _toServerIso(endAt),
       },
       token: token,
     );
     return Event(
       id: res['id'] ?? '',
       name: res['name'] ?? '',
-      date: DateTime.tryParse(res['date'] ?? '') ?? DateTime.now(),
+      date: _parseDateTime(res['date']) ?? DateTime.now(),
       status: res['status'] ?? status,
-      startAt: res['startAt'] == null ? startAt : DateTime.tryParse(res['startAt'].toString()),
-      endAt: res['endAt'] == null ? endAt : DateTime.tryParse(res['endAt'].toString()),
+      startAt: _parseDateTime(res['startAt']) ?? startAt,
+      endAt: _parseDateTime(res['endAt']) ?? endAt,
       attendees: const [],
     );
   }
@@ -113,10 +154,10 @@ class ApiService {
       '/events/$id',
       {
         if (name != null) 'name': name,
-        if (date != null) 'date': date.toIso8601String(),
+        if (date != null) 'date': _toServerIso(date),
         if (status != null) 'status': status,
-        'startAt': startAt?.toIso8601String(),
-        'endAt': endAt?.toIso8601String(),
+        'startAt': startAt == null ? null : _toServerIso(startAt),
+        'endAt': endAt == null ? null : _toServerIso(endAt),
       },
       token: token,
     );
@@ -229,5 +270,51 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token');
     await c.deleteJson('/users/$id', token: token);
+  }
+
+  static Future<Map<String, dynamic>> updateUser(
+    String userId, {
+    String? id,
+    String? username,
+    String? password,
+    String? role,
+    bool? isApproved,
+    String? fullName,
+    String? studentId,
+    String? course,
+    String? section,
+  }) async {
+    final c = await _client();
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    return c.patchJson(
+      '/users/$userId',
+      {
+        if (id != null) 'id': id,
+        if (username != null) 'username': username,
+        if (password != null) 'password': password,
+        if (role != null) 'role': role,
+        if (isApproved != null) 'isApproved': isApproved,
+        if (fullName != null) 'fullName': fullName,
+        if (studentId != null) 'studentId': studentId,
+        if (course != null) 'course': course,
+        if (section != null) 'section': section,
+      },
+      token: token,
+    );
+  }
+
+  static Future<Map<String, dynamic>> adminResetUserPassword(
+    String userId,
+    String newPassword,
+  ) async {
+    final c = await _client();
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    return c.postJson(
+      '/users/$userId/reset-password',
+      {'newPassword': newPassword},
+      token: token,
+    );
   }
 }

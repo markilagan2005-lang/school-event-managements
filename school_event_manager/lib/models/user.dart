@@ -3,6 +3,7 @@ class User {
   final String username;
   String password;
   final String role; // 'admin' or 'student'
+  final bool isApproved;
   final String fullName;
   final String studentId;
   final String course;
@@ -13,6 +14,7 @@ class User {
     required this.username,
     required this.password,
     required this.role,
+    this.isApproved = true,
     this.fullName = '',
     this.studentId = '',
     this.course = '',
@@ -24,6 +26,7 @@ class User {
     'username': username,
     'password': password,
     'role': role,
+    'isApproved': isApproved,
     'fullName': fullName,
     'studentId': studentId,
     'course': course,
@@ -35,6 +38,9 @@ class User {
     username: json['username'] ?? '',
     password: json['password'] ?? '',
     role: json['role'] ?? '',
+    isApproved: (json['role'] ?? '') == 'faculty'
+        ? json['isApproved'] == true
+        : (json['isApproved'] == false ? false : true),
     fullName: json['fullName'] ?? '',
     studentId: json['studentId'] ?? '',
     course: json['course'] ?? '',

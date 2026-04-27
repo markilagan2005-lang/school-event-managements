@@ -27,9 +27,245 @@ class HomeScreen extends ConsumerWidget {
       return AdminHomeScreen(user: user);
     }
     if (user.role == 'faculty') {
+      if (!user.isApproved) {
+        return FacultyPendingApprovalScreen(user: user);
+      }
       return FacultyHomeScreen(user: user);
     }
     return StudentHomeScreen(user: user);
+  }
+}
+
+void _openSettingsSheet(BuildContext context, WidgetRef ref, User user) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('Instructions'),
+              subtitle: Text('How to use the app as ${user.role}.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showInstructionsDialog(context, user);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('About Us'),
+              subtitle: const Text('App details and purpose.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showAboutUsDialog(context);
+              },
+            ),
+            const Divider(height: 8),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Color(0xFFB3261E)),
+              title: const Text('Logout', style: TextStyle(color: Color(0xFFB3261E), fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                ref.read(authProvider.notifier).logout();
+              },
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+void _showInstructionsDialog(BuildContext context, User user) {
+  final title = switch (user.role) {
+    'admin' => 'Admin Instructions',
+    'faculty' => 'Faculty Instructions',
+    _ => 'Student Instructions',
+  };
+  final text = switch (user.role) {
+    'admin' =>
+      '1. Create and manage events.\n'
+          '2. Show event QR for attendance.\n'
+          '3. Manage users and reports.\n'
+          '4. Keep only trusted admin accounts.',
+    'faculty' =>
+      '1. Open Events tab and check active events.\n'
+          '2. In Attendance, monitor your handled records.\n'
+          '3. During scanning, select faculty correctly for check-in/check-out.',
+    _ =>
+      '1. Open Scan QR tab.\n'
+          '2. Scan event QR when instructor allows.\n'
+          '3. Select faculty for check-in/check-out.\n'
+          '4. Review logs in My Attendance tab.',
+  };
+
+  showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Text(text),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Got it'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showAboutUsDialog(BuildContext context) {
+  showDialog<void>(
+    context: context,
+    builder: (context) {
+      final textTheme = Theme.of(context).textTheme;
+      return AlertDialog(
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.groups_2_outlined,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Text('About Us'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 84,
+                  height: 84,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.16),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/images/lcc.png',
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'ATTENDIFY: A QR CODE BASED ATTENDANCE TRACKING SYSTEM FOR EFFICIENT SCHOOL EVENT MANAGEMENT AT LA CONCEPCION COLLEGE',
+                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'Team Roles',
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              _RoleLine(
+                role: 'Programmer',
+                name: 'Mark Keneth M Ilagan',
+                highlight: true,
+              ),
+              const SizedBox(height: 4),
+              const _RoleLine(
+                role: 'Project Manager',
+                name: 'Tirso Jr A. Dela Pena',
+              ),
+              const SizedBox(height: 4),
+              const _RoleLine(
+                role: 'Document Specialist',
+                name: 'Chelsea Rayne Glynese M. Olavides',
+              ),
+              const SizedBox(height: 4),
+              const _RoleLine(
+                role: 'Document Specialist',
+                name: 'Jellamae T. Base',
+              ),
+              const SizedBox(height: 4),
+              const _RoleLine(
+                role: 'System Analyst',
+                name: 'Ayessah May G. Santelices',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _RoleLine extends StatelessWidget {
+  const _RoleLine({
+    required this.role,
+    required this.name,
+    this.highlight = false,
+  });
+
+  final String role;
+  final String name;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = '$role - $name';
+    if (!highlight) return Text(text);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
   }
 }
 
@@ -59,8 +295,8 @@ class AdminHomeScreen extends ConsumerWidget {
           surfaceTintColor: Theme.of(context).colorScheme.primary,
           actions: [
             IconButton(
-              onPressed: () => ref.read(authProvider.notifier).logout(),
-              icon: const Icon(Icons.logout),
+              onPressed: () => _openSettingsSheet(context, ref, user),
+              icon: const Icon(Icons.settings),
               style: IconButton.styleFrom(
                 foregroundColor: Colors.white,
                 backgroundColor: Colors.white24,
@@ -80,13 +316,15 @@ class AdminHomeScreen extends ConsumerWidget {
             ],
           ),
         ),
-        body: const TabBarView(
-          children: [
-            AdminEventsTab(),
-            AdminAttendanceTab(),
-            AdminReportsTab(),
-            AdminUsersTab(),
-          ],
+        body: const _TabBackground(
+          child: TabBarView(
+            children: [
+              AdminEventsTab(),
+              AdminAttendanceTab(),
+              AdminReportsTab(),
+              AdminUsersTab(),
+            ],
+          ),
         ),
       ),
     );
@@ -119,8 +357,8 @@ class StudentHomeScreen extends ConsumerWidget {
           surfaceTintColor: Theme.of(context).colorScheme.primary,
           actions: [
             IconButton(
-              onPressed: () => ref.read(authProvider.notifier).logout(),
-              icon: const Icon(Icons.logout),
+              onPressed: () => _openSettingsSheet(context, ref, user),
+              icon: const Icon(Icons.settings),
               style: IconButton.styleFrom(
                 foregroundColor: Colors.white,
                 backgroundColor: Colors.white24,
@@ -138,11 +376,13 @@ class StudentHomeScreen extends ConsumerWidget {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            StudentScannerTab(user: user),
-            StudentAttendanceTab(user: user),
-          ],
+        body: _TabBackground(
+          child: TabBarView(
+            children: [
+              StudentScannerTab(user: user),
+              StudentAttendanceTab(user: user),
+            ],
+          ),
         ),
       ),
     );
@@ -175,8 +415,8 @@ class FacultyHomeScreen extends ConsumerWidget {
           surfaceTintColor: Theme.of(context).colorScheme.primary,
           actions: [
             IconButton(
-              onPressed: () => ref.read(authProvider.notifier).logout(),
-              icon: const Icon(Icons.logout),
+              onPressed: () => _openSettingsSheet(context, ref, user),
+              icon: const Icon(Icons.settings),
               style: IconButton.styleFrom(
                 foregroundColor: Colors.white,
                 backgroundColor: Colors.white24,
@@ -194,11 +434,79 @@ class FacultyHomeScreen extends ConsumerWidget {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            const FacultyEventsTab(),
-            FacultyAttendanceTab(user: user),
-          ],
+        body: _TabBackground(
+          child: TabBarView(
+            children: [
+              const FacultyEventsTab(),
+              FacultyAttendanceTab(user: user),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class FacultyPendingApprovalScreen extends ConsumerWidget {
+  const FacultyPendingApprovalScreen({super.key, required this.user});
+
+  final User user;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Faculty Verification'),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.verified_user_outlined, size: 56),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Your faculty account is waiting for admin approval.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Please contact your admin. You can login after verification.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      final msg = await ref.read(authProvider.notifier).refreshCurrentUser();
+                      if (!context.mounted) return;
+                      if (msg != null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(msg)),
+                        );
+                        return;
+                      }
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Approval confirmed. Welcome!')),
+                      );
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Approval'),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    onPressed: () => ref.read(authProvider.notifier).logout(),
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Logout'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -918,11 +1226,19 @@ class AdminUsersTab extends ConsumerStatefulWidget {
 
 class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
   late Future<List<User>> _future;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _future = _loadUsers();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<List<User>> _loadUsers() async {
@@ -958,6 +1274,25 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                 label: const Text('Refresh'),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _searchQuery = value.trim().toLowerCase()),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: 'Search by user ID, username, or student ID',
+              suffixIcon: _searchQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+            ),
           ),
           const SizedBox(height: 12),
           Expanded(
@@ -997,19 +1332,31 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   );
                 }
                 final users = snapshot.data!;
-                if (users.isEmpty) {
+                final filteredUsers = _searchQuery.isEmpty
+                    ? users
+                    : users.where((u) {
+                        final id = u.id.toLowerCase();
+                        final username = u.username.toLowerCase();
+                        final studentId = u.studentId.toLowerCase();
+                        final fullName = u.fullName.toLowerCase();
+                        return id.contains(_searchQuery) ||
+                            username.contains(_searchQuery) ||
+                            studentId.contains(_searchQuery) ||
+                            fullName.contains(_searchQuery);
+                      }).toList();
+                if (filteredUsers.isEmpty) {
                   return Center(
                     child: Text(
-                      'No users yet',
+                      _searchQuery.isEmpty ? 'No users yet' : 'No users found',
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
                     ),
                   );
                 }
-                final students = users.where((u) => u.role == 'student').toList()
+                final students = filteredUsers.where((u) => u.role == 'student').toList()
                   ..sort((a, b) => '${a.course}|${a.section}|${a.fullName}|${a.username}'.compareTo(
                         '${b.course}|${b.section}|${b.fullName}|${b.username}',
                       ));
-                final others = users.where((u) => u.role != 'student').toList()
+                final others = filteredUsers.where((u) => u.role != 'student').toList()
                   ..sort((a, b) => '${a.role}|${a.fullName}|${a.username}'.compareTo('${b.role}|${b.fullName}|${b.username}'));
                 final groups = <String, List<User>>{};
                 for (final s in students) {
@@ -1029,6 +1376,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     ),
                   );
                   for (final u in entry.value) {
+                    final canEditUserId = currentUser == null || u.id != currentUser.id;
                     final canDelete = currentUser != null && u.id != currentUser.id;
                     tiles.add(
                       Card(
@@ -1045,14 +1393,33 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                               '${u.studentId.isEmpty ? u.username : u.studentId} • ${u.username}',
                               style: const TextStyle(color: Colors.black54),
                             ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: canDelete
-                                  ? () async {
-                                      await ApiService.deleteUser(u.id);
-                                      setState(() => _future = _loadUsers());
-                                    }
-                                  : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Edit user',
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: () => _showEditUserDialog(
+                                    context,
+                                    u,
+                                    canEditUserId: canEditUserId,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Reset password',
+                                  icon: const Icon(Icons.lock_reset_outlined),
+                                  onPressed: () => _showAdminResetPasswordDialog(context, u),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: canDelete
+                                      ? () async {
+                                          await ApiService.deleteUser(u.id);
+                                          setState(() => _future = _loadUsers());
+                                        }
+                                      : null,
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -1072,6 +1439,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     ),
                   );
                   for (final u in others) {
+                    final canEditUserId = currentUser == null || u.id != currentUser.id;
                     final canDelete = currentUser != null && u.id != currentUser.id;
                     tiles.add(
                       Card(
@@ -1085,17 +1453,56 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                             ),
                             title: Text(u.fullName.isEmpty ? u.username : u.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
                             subtitle: Text(
-                              '${u.role.toUpperCase()} • ${u.username}',
+                              '${u.role.toUpperCase()} • ${u.username}${u.role == 'faculty' && !u.isApproved ? ' • Pending approval' : ''}',
                               style: const TextStyle(color: Colors.black54),
                             ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: canDelete
-                                  ? () async {
-                                      await ApiService.deleteUser(u.id);
-                                      setState(() => _future = _loadUsers());
-                                    }
-                                  : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (u.role == 'faculty' && !u.isApproved)
+                                  IconButton(
+                                    tooltip: 'Approve faculty',
+                                    icon: const Icon(Icons.verified),
+                                    onPressed: () async {
+                                      try {
+                                        await ApiService.updateUser(u.id, isApproved: true);
+                                        if (!mounted || !context.mounted) return;
+                                        setState(() => _future = _loadUsers());
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('${u.username} verified')),
+                                        );
+                                      } catch (e) {
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text(e.toString())),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                IconButton(
+                                  tooltip: 'Edit user',
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: () => _showEditUserDialog(
+                                    context,
+                                    u,
+                                    canEditUserId: canEditUserId,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Reset password',
+                                  icon: const Icon(Icons.lock_reset_outlined),
+                                  onPressed: () => _showAdminResetPasswordDialog(context, u),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: canDelete
+                                      ? () async {
+                                          await ApiService.deleteUser(u.id);
+                                          setState(() => _future = _loadUsers());
+                                        }
+                                      : null,
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -1286,6 +1693,247 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                 }
               },
               child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAdminResetPasswordDialog(BuildContext context, User user) async {
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: Text('Reset Password - ${user.username}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: newPasswordController,
+                obscureText: obscureNew,
+                decoration: InputDecoration(
+                  labelText: 'New Password',
+                  suffixIcon: IconButton(
+                    tooltip: obscureNew ? 'Show password' : 'Hide password',
+                    onPressed: () => setStateDialog(() => obscureNew = !obscureNew),
+                    icon: Icon(obscureNew ? Icons.visibility_off : Icons.visibility),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: confirmPasswordController,
+                obscureText: obscureConfirm,
+                decoration: InputDecoration(
+                  labelText: 'Confirm Password',
+                  suffixIcon: IconButton(
+                    tooltip: obscureConfirm ? 'Show password' : 'Hide password',
+                    onPressed: () => setStateDialog(() => obscureConfirm = !obscureConfirm),
+                    icon: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final newPassword = newPasswordController.text;
+                final confirmPassword = confirmPasswordController.text;
+                if (newPassword.isEmpty || confirmPassword.isEmpty) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please fill all fields')),
+                  );
+                  return;
+                }
+                if (newPassword != confirmPassword) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Password confirmation does not match')),
+                  );
+                  return;
+                }
+                if (newPassword.length < 6) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Password must be at least 6 characters')),
+                  );
+                  return;
+                }
+                try {
+                  await ApiService.adminResetUserPassword(user.id, newPassword);
+                  if (!context.mounted) return;
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Password reset for ${user.username}')),
+                  );
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(e.toString())),
+                  );
+                }
+              },
+              child: const Text('Reset'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEditUserDialog(
+    BuildContext context,
+    User user, {
+    required bool canEditUserId,
+  }) async {
+    final userIdController = TextEditingController(text: user.id);
+    final usernameController = TextEditingController(text: user.username);
+    final passwordController = TextEditingController();
+    final fullNameController = TextEditingController(text: user.fullName);
+    final studentIdController = TextEditingController(text: user.studentId);
+    final courseController = TextEditingController(text: user.course);
+    final sectionController = TextEditingController(text: user.section);
+    String role = user.role;
+    bool obscurePassword = true;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: Text('Edit User - ${user.username}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: userIdController,
+                  enabled: canEditUserId,
+                  decoration: InputDecoration(
+                    labelText: 'User ID',
+                    helperText: canEditUserId ? null : 'You cannot edit your own User ID',
+                  ),
+                ),
+                TextField(
+                  controller: usernameController,
+                  decoration: const InputDecoration(labelText: 'Username'),
+                ),
+                TextField(
+                  controller: passwordController,
+                  obscureText: obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'New Password (optional)',
+                    suffixIcon: IconButton(
+                      tooltip: obscurePassword ? 'Show password' : 'Hide password',
+                      onPressed: () => setStateDialog(() => obscurePassword = !obscurePassword),
+                      icon: Icon(obscurePassword ? Icons.visibility_off : Icons.visibility),
+                    ),
+                  ),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: role,
+                  decoration: const InputDecoration(labelText: 'Role'),
+                  items: const [
+                    DropdownMenuItem(value: 'student', child: Text('Student')),
+                    DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                    DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setStateDialog(() => role = value);
+                  },
+                ),
+                TextField(
+                  controller: fullNameController,
+                  decoration: const InputDecoration(labelText: 'Full Name'),
+                ),
+                TextField(
+                  controller: studentIdController,
+                  decoration: const InputDecoration(labelText: 'Student ID'),
+                ),
+                TextField(
+                  controller: courseController,
+                  decoration: const InputDecoration(labelText: 'Course'),
+                ),
+                TextField(
+                  controller: sectionController,
+                  decoration: const InputDecoration(labelText: 'Section'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final nextId = userIdController.text.trim();
+                final nextUsername = usernameController.text.trim();
+                final nextPassword = passwordController.text;
+                final nextFullName = fullNameController.text.trim();
+                final nextStudentId = studentIdController.text.trim();
+                final nextCourse = courseController.text.trim();
+                final nextSection = sectionController.text.trim();
+
+                if (nextId.isEmpty || nextUsername.isEmpty) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('User ID and username are required')),
+                  );
+                  return;
+                }
+                if (role == 'student' &&
+                    (nextFullName.isEmpty ||
+                        nextStudentId.isEmpty ||
+                        nextCourse.isEmpty ||
+                        nextSection.isEmpty)) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Student must have full name, student ID, course, and section')),
+                  );
+                  return;
+                }
+                if (nextPassword.isNotEmpty && nextPassword.length < 6) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('New password must be at least 6 characters')),
+                  );
+                  return;
+                }
+
+                try {
+                  await ApiService.updateUser(
+                    user.id,
+                    id: nextId,
+                    username: nextUsername,
+                    password: nextPassword.isEmpty ? null : nextPassword,
+                    role: role,
+                    fullName: nextFullName,
+                    studentId: nextStudentId,
+                    course: nextCourse,
+                    section: nextSection,
+                  );
+                  if (!context.mounted) return;
+                  Navigator.pop(dialogContext);
+                  setState(() => _future = _loadUsers());
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('User updated')),
+                  );
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(e.toString())),
+                  );
+                }
+              },
+              child: const Text('Save'),
             ),
           ],
         ),
@@ -1638,16 +2286,18 @@ class _FacultyAttendanceTabState extends ConsumerState<FacultyAttendanceTab> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (attendance) {
-        final mineByCheckoutFaculty = attendance.where((r) => r.checkedOutByFacultyId == widget.user.id).toList();
-        final courses = mineByCheckoutFaculty
+        final mineByFaculty = attendance
+            .where((r) => r.checkedOutByFacultyId == widget.user.id || (r.checkOutAt == null && r.checkedInByFacultyId == widget.user.id))
+            .toList();
+        final courses = mineByFaculty
             .map((r) => r.studentCourse)
             .where((c) => c.trim().isNotEmpty)
             .toSet()
             .toList()
           ..sort();
         final filtered = _courseFilter == 'All'
-            ? mineByCheckoutFaculty
-            : mineByCheckoutFaculty.where((r) => r.studentCourse == _courseFilter).toList();
+            ? mineByFaculty
+            : mineByFaculty.where((r) => r.studentCourse == _courseFilter).toList();
         final sorted = [...filtered]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
         return RefreshIndicator(
@@ -1750,15 +2400,51 @@ class _StatusChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: fg.withValues(alpha: 0.2)),
       ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: fg,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.4,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOut ? Icons.logout : Icons.login,
+            size: 14,
+            color: fg,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: fg,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TabBackground extends StatelessWidget {
+  const _TabBackground({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFF1F4FF),
+            Color(0xFFF7F8FC),
+            Color(0xFFF6F7FB),
+          ],
         ),
       ),
+      child: child,
     );
   }
 }

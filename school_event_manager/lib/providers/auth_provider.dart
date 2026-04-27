@@ -97,4 +97,18 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
       state = const AsyncValue.data(null);
     }
   }
+
+  Future<String?> refreshCurrentUser() async {
+    try {
+      final user = await AuthService.refreshCurrentUserFromServer();
+      state = AsyncValue.data(user);
+      if (user != null && user.role == 'faculty' && !user.isApproved) {
+        return 'Still waiting for admin approval';
+      }
+      return null;
+    } catch (e) {
+      if (e is AuthFailure) return e.message;
+      return _cleanError(e);
+    }
+  }
 }

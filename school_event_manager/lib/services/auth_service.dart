@@ -21,6 +21,9 @@ class AuthService {
     if (raw.contains('Request failed (404)')) {
       return const AuthFailure(AuthFailureCode.unknown, 'Server URL is wrong');
     }
+    if (raw.toLowerCase().contains('<!doctype html') || raw.toLowerCase().contains('<html')) {
+      return const AuthFailure(AuthFailureCode.unknown, 'Server route not found');
+    }
     final idx = raw.indexOf('{');
     if (idx != -1) {
       final jsonStr = raw.substring(idx);
@@ -66,8 +69,16 @@ class AuthService {
       final userJson = res['user'] as Map<String, dynamic>?;
       if (userJson == null) return null;
       final user = User.fromJson(userJson);
+      final token = res['token']?.toString() ?? '';
+      if (token.isEmpty) {
+        final pendingMsg = (res['message']?.toString().trim().isNotEmpty ?? false)
+            ? res['message'].toString().trim()
+            : 'Account created. Wait for admin verification.';
+        throw AuthFailure(AuthFailureCode.unknown, pendingMsg);
+      }
       return user;
     } catch (e) {
+      if (e is AuthFailure) rethrow;
       final failure = _authFailureFromServerError(e);
       throw AuthFailure(
         failure.code,
@@ -81,8 +92,17 @@ class AuthService {
       final res = await ApiService.login(username, password);
       final userJson = res['user'] as Map<String, dynamic>?;
       if (userJson == null) return null;
-      return User.fromJson(userJson);
+      final user = User.fromJson(userJson);
+      if (user.role == 'faculty' && !user.isApproved) {
+        await logout();
+        throw const AuthFailure(
+          AuthFailureCode.unknown,
+          'Faculty account is pending admin approval',
+        );
+      }
+      return user;
     } catch (e) {
+      if (e is AuthFailure) rethrow;
       final failure = _authFailureFromServerError(e);
       throw AuthFailure(
         failure.code,
@@ -107,6 +127,11 @@ class AuthService {
     final userJsonStr = prefs.getString(_userKey);
     if (userJsonStr == null) return null;
     final userMap = jsonDecode(userJsonStr) as Map<String, dynamic>;
+    return User.fromJson(userMap);
+  }
+
+  static Future<User?> refreshCurrentUserFromServer() async {
+    final userMap = await ApiService.getMe();
     return User.fromJson(userMap);
   }
 
