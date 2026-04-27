@@ -25,8 +25,8 @@ const ATTENDANCE_TIMEOUT_MIN = parseInt(process.env.ATT_TIMEOUT_MIN || '60', 10)
 const DEFAULT_ADMIN_USERNAME = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || '@LCCADMIN2026';
 const DEFAULT_ADMIN_FULLNAME = process.env.DEFAULT_ADMIN_FULLNAME || 'System Admin';
-const MONGODB_URI = process.env.MONGODB_URI || '';
-const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'attendify';
+const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
+const MONGODB_DB_NAME = (process.env.MONGODB_DB_NAME || 'attendify').trim();
 
 // Middleware
 app.set('trust proxy', 1);
