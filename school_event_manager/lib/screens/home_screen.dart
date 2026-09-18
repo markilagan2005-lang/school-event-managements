@@ -1027,7 +1027,7 @@ class _AdminReportsTabState extends ConsumerState<AdminReportsTab> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Export (Name + In/Out)',
+                          'Export (Name + Course + Section + In/Out)',
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
                         ),
                       ),
@@ -1111,6 +1111,8 @@ class _AdminReportsTabState extends ConsumerState<AdminReportsTab> {
                 ...sorted.map((r) {
                   final checkIn = r.checkInAt ?? r.timestamp;
                   final checkOut = r.checkOutAt;
+                  final course = r.studentCourse.trim().isEmpty ? 'N/A' : r.studentCourse.trim();
+                  final section = r.studentSection.trim().isEmpty ? 'N/A' : r.studentSection.trim();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Card(
@@ -1124,7 +1126,9 @@ class _AdminReportsTabState extends ConsumerState<AdminReportsTab> {
                           ),
                           title: Text(r.studentName, style: const TextStyle(fontWeight: FontWeight.w800)),
                           subtitle: Text(
-                            'In: ${checkIn.toLocal()}\nOut: ${(checkOut ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes))).toLocal()}',
+                            'Course: $course • Section: $section\n'
+                            'In: ${checkIn.toLocal()}\n'
+                            'Out: ${(checkOut ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes))).toLocal()}',
                             style: const TextStyle(color: Colors.black54),
                           ),
                           trailing: IconButton(
@@ -1169,11 +1173,13 @@ class _AdminReportsTabState extends ConsumerState<AdminReportsTab> {
 
   String _toCsv(List<AttendanceRecord> attendance) {
     final buffer = StringBuffer();
-    buffer.writeln('studentName,checkInAt,checkOutAt');
+    buffer.writeln('studentName,studentCourse,studentSection,checkInAt,checkOutAt');
     for (final r in attendance) {
       final checkIn = r.checkInAt ?? r.timestamp;
       buffer.writeln([
         _csvCell(r.studentName),
+        _csvCell(r.studentCourse),
+        _csvCell(r.studentSection),
         _csvCell(checkIn.toIso8601String()),
         _csvCell(r.checkOutAt?.toIso8601String() ?? ''),
       ].join(','));
@@ -1393,32 +1399,41 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                               '${u.studentId.isEmpty ? u.username : u.studentId} • ${u.username}',
                               style: const TextStyle(color: Colors.black54),
                             ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Edit user',
-                                  icon: const Icon(Icons.edit_outlined),
-                                  onPressed: () => _showEditUserDialog(
+                            trailing: PopupMenuButton<String>(
+                              tooltip: 'User actions',
+                              onSelected: (value) async {
+                                if (value == 'edit') {
+                                  _showEditUserDialog(
                                     context,
                                     u,
                                     canEditUserId: canEditUserId,
+                                  );
+                                  return;
+                                }
+                                if (value == 'reset') {
+                                  _showAdminResetPasswordDialog(context, u);
+                                  return;
+                                }
+                                if (value == 'delete' && canDelete) {
+                                  await ApiService.deleteUser(u.id);
+                                  if (!mounted) return;
+                                  setState(() => _future = _loadUsers());
+                                }
+                              },
+                              itemBuilder: (_) => [
+                                const PopupMenuItem<String>(
+                                  value: 'edit',
+                                  child: Text('Edit user'),
+                                ),
+                                const PopupMenuItem<String>(
+                                  value: 'reset',
+                                  child: Text('Reset password'),
+                                ),
+                                if (canDelete)
+                                  const PopupMenuItem<String>(
+                                    value: 'delete',
+                                    child: Text('Delete user'),
                                   ),
-                                ),
-                                IconButton(
-                                  tooltip: 'Reset password',
-                                  icon: const Icon(Icons.lock_reset_outlined),
-                                  onPressed: () => _showAdminResetPasswordDialog(context, u),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: canDelete
-                                      ? () async {
-                                          await ApiService.deleteUser(u.id);
-                                          setState(() => _future = _loadUsers());
-                                        }
-                                      : null,
-                                ),
                               ],
                             ),
                           ),
@@ -1456,52 +1471,62 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                               '${u.role.toUpperCase()} • ${u.username}${u.role == 'faculty' && !u.isApproved ? ' • Pending approval' : ''}',
                               style: const TextStyle(color: Colors.black54),
                             ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (u.role == 'faculty' && !u.isApproved)
-                                  IconButton(
-                                    tooltip: 'Approve faculty',
-                                    icon: const Icon(Icons.verified),
-                                    onPressed: () async {
-                                      try {
-                                        await ApiService.updateUser(u.id, isApproved: true);
-                                        if (!mounted || !context.mounted) return;
-                                        setState(() => _future = _loadUsers());
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('${u.username} verified')),
-                                        );
-                                      } catch (e) {
-                                        if (!context.mounted) return;
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text(e.toString())),
-                                        );
-                                      }
-                                    },
-                                  ),
-                                IconButton(
-                                  tooltip: 'Edit user',
-                                  icon: const Icon(Icons.edit_outlined),
-                                  onPressed: () => _showEditUserDialog(
+                            trailing: PopupMenuButton<String>(
+                              tooltip: 'User actions',
+                              onSelected: (value) async {
+                                if (value == 'approve') {
+                                  try {
+                                    await ApiService.updateUser(u.id, isApproved: true);
+                                    if (!mounted || !context.mounted) return;
+                                    setState(() => _future = _loadUsers());
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('${u.username} verified')),
+                                    );
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(e.toString())),
+                                    );
+                                  }
+                                  return;
+                                }
+                                if (value == 'edit') {
+                                  _showEditUserDialog(
                                     context,
                                     u,
                                     canEditUserId: canEditUserId,
+                                  );
+                                  return;
+                                }
+                                if (value == 'reset') {
+                                  _showAdminResetPasswordDialog(context, u);
+                                  return;
+                                }
+                                if (value == 'delete' && canDelete) {
+                                  await ApiService.deleteUser(u.id);
+                                  if (!mounted) return;
+                                  setState(() => _future = _loadUsers());
+                                }
+                              },
+                              itemBuilder: (_) => [
+                                if (u.role == 'faculty' && !u.isApproved)
+                                  const PopupMenuItem<String>(
+                                    value: 'approve',
+                                    child: Text('Approve faculty'),
                                   ),
+                                const PopupMenuItem<String>(
+                                  value: 'edit',
+                                  child: Text('Edit user'),
                                 ),
-                                IconButton(
-                                  tooltip: 'Reset password',
-                                  icon: const Icon(Icons.lock_reset_outlined),
-                                  onPressed: () => _showAdminResetPasswordDialog(context, u),
+                                const PopupMenuItem<String>(
+                                  value: 'reset',
+                                  child: Text('Reset password'),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: canDelete
-                                      ? () async {
-                                          await ApiService.deleteUser(u.id);
-                                          setState(() => _future = _loadUsers());
-                                        }
-                                      : null,
-                                ),
+                                if (canDelete)
+                                  const PopupMenuItem<String>(
+                                    value: 'delete',
+                                    child: Text('Delete user'),
+                                  ),
                               ],
                             ),
                           ),

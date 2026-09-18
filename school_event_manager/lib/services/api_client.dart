@@ -5,6 +5,24 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config.dart';
 
+class ApiHttpException implements Exception {
+  const ApiHttpException(
+    this.statusCode,
+    this.body, {
+    this.decodedBody,
+  });
+
+  final int statusCode;
+  final String body;
+  final Map<String, dynamic>? decodedBody;
+
+  @override
+  String toString() {
+    if (body.isEmpty) return 'Request failed ($statusCode)';
+    return body;
+  }
+}
+
 class ApiClient {
   ApiClient(String baseUrl) : baseUrl = _normalizeBaseUrl(baseUrl);
 
@@ -21,6 +39,17 @@ class ApiClient {
       return url;
     }
     return '$url/api';
+  }
+
+  static Map<String, dynamic>? _tryDecodeJson(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return null;
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      return jsonDecode(trimmed) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
   }
 
   static bool _isLocalOrLanUrl(String url) {
@@ -62,7 +91,11 @@ class ApiClient {
           .timeout(_timeout);
     });
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception(res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body);
+      throw ApiHttpException(
+        res.statusCode,
+        res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body,
+        decodedBody: _tryDecodeJson(res.body),
+      );
     }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
@@ -80,7 +113,11 @@ class ApiClient {
           .timeout(_timeout);
     });
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception(res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body);
+      throw ApiHttpException(
+        res.statusCode,
+        res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body,
+        decodedBody: _tryDecodeJson(res.body),
+      );
     }
     return jsonDecode(res.body) as List<dynamic>;
   }
@@ -98,7 +135,11 @@ class ApiClient {
           .timeout(_timeout);
     });
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception(res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body);
+      throw ApiHttpException(
+        res.statusCode,
+        res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body,
+        decodedBody: _tryDecodeJson(res.body),
+      );
     }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
@@ -116,7 +157,11 @@ class ApiClient {
           .timeout(_timeout);
     });
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception(res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body);
+      throw ApiHttpException(
+        res.statusCode,
+        res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body,
+        decodedBody: _tryDecodeJson(res.body),
+      );
     }
     return res.body.isEmpty ? <String, dynamic>{} : jsonDecode(res.body) as Map<String, dynamic>;
   }
@@ -136,7 +181,11 @@ class ApiClient {
           .timeout(_timeout);
     });
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception(res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body);
+      throw ApiHttpException(
+        res.statusCode,
+        res.body.isEmpty ? 'Request failed (${res.statusCode})' : res.body,
+        decodedBody: _tryDecodeJson(res.body),
+      );
     }
     return res.body.isEmpty ? <String, dynamic>{} : jsonDecode(res.body) as Map<String, dynamic>;
   }

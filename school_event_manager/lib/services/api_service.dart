@@ -22,6 +22,13 @@ class ApiService {
     return ApiClient(base);
   }
 
+  static Future<Map<String, dynamic>> sendRegistrationOtp(String email) async {
+    final c = await _client();
+    return c.postJson('/send-registration-otp', {
+      'email': email.trim(),
+    });
+  }
+
   static Future<Map<String, dynamic>> register(
     String username,
     String password,
@@ -30,6 +37,9 @@ class ApiService {
     String? studentId,
     String? course,
     String? section,
+    String? email,
+    String? registrationOtp,
+    String? registrationOtpRef,
   }) async {
     final c = await _client();
     final res = await c.postJson('/register', {
@@ -40,10 +50,15 @@ class ApiService {
       if (studentId != null) 'studentId': studentId,
       if (course != null) 'course': course,
       if (section != null) 'section': section,
+      if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+      if (registrationOtp != null && registrationOtp.trim().isNotEmpty)
+        'registrationOtp': registrationOtp.trim(),
+      if (registrationOtpRef != null && registrationOtpRef.trim().isNotEmpty)
+        'registrationOtpRef': registrationOtpRef.trim(),
     });
     final prefs = await SharedPreferences.getInstance();
     final token = res['token']?.toString();
-    if (token != null && token.isNotEmpty) {
+    if (token != null && token.isNotEmpty && res['user'] != null) {
       await prefs.setString('auth_token', token);
       await prefs.setString('current_user', jsonEncode(res['user']));
     } else {
@@ -53,12 +68,54 @@ class ApiService {
     return res;
   }
 
+  static Future<void> verifyEmail(String token) async {
+    final c = await _client();
+    await c.getJsonMap('/verify-email?token=$token');
+  }
+
+  static Future<Map<String, dynamic>> verifyOtp({
+    String? username,
+    String? email,
+    required String code,
+  }) async {
+    final c = await _client();
+    return c.postJson('/verify-otp', {
+      if (username != null && username.trim().isNotEmpty) 'username': username.trim(),
+      if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+      'code': code.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> resendOtp({
+    String? username,
+    String? email,
+  }) async {
+    final c = await _client();
+    return c.postJson('/resend-otp', {
+      if (username != null && username.trim().isNotEmpty) 'username': username.trim(),
+      if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+    });
+  }
+
   static Future<Map<String, dynamic>> login(String username, String password) async {
     final c = await _client();
     final res = await c.postJson('/login', {'username': username, 'password': password});
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', res['token'] as String);
-    await prefs.setString('current_user', jsonEncode(res['user']));
+    final token = res['token']?.toString();
+    final user = res['user'];
+    if (token != null && token.isNotEmpty && user != null) {
+      await prefs.setString('auth_token', token);
+      await prefs.setString('current_user', jsonEncode(user));
+    } else {
+      await prefs.remove('auth_token');
+      await prefs.remove('current_user');
+      if (res['message'] != null && res['message'].toString().trim().isNotEmpty) {
+        throw Exception(res['message'].toString().trim());
+      }
+      if (res['error'] != null && res['error'].toString().trim().isNotEmpty) {
+        throw Exception(res['error'].toString().trim());
+      }
+    }
     return res;
   }
 

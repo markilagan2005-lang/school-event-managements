@@ -1,0 +1,50 @@
+# ---------------------------------------------------------------------
+# Render.com Blueprint (render.yaml)
+# Drop this file in your repo root, then in Render click:
+#   New -> Blueprint -> select this repo
+# It will auto-create the "school-event-api" Web Service with correct
+# build/start commands, runtime, and env var placeholders.
+# ---------------------------------------------------------------------
+services:
+  - type: web
+    name: school-event-api
+    runtime: node
+    # branch: main
+    buildCommand: npm install --include=dev
+    startCommand: npm start
+    plan: free
+    # Render free tier sleeps after 15 minutes of inactivity.
+    # Keep it awake by adding an uptime ping (e.g. https://cron-job.org)
+    # to your service /health endpoint once per minute.
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_DB_NAME
+        value: attendify
+      - key: DEFAULT_ADMIN_USERNAME
+        value: admin
+      - key: ATT_TIMEOUT_MIN
+        value: "60"
+      # --- SECRETS: override these in the Render "Environment" tab after deploy ---
+      # Generate: `openssl rand -hex 32`
+      - key: JWT_SECRET
+        generateValue: true
+      # Default admin password. You can change from the app after first login.
+      - key: DEFAULT_ADMIN_PASSWORD
+        value: "@LCCADMIN2026"
+      # Optional but RECOMMENDED: paste your MongoDB Atlas connection string here.
+      # If this is blank the service will still work using JSON-file storage
+      # in the container, but data will be wiped on every Render redeploy.
+      - key: MONGODB_URI
+        sync: false
+      # --- Gmail SMTP (required for actual email delivery of verification codes) ---
+      # Without these, OTP codes are logged in server logs only (copy from Render
+      # logs for testing OR set these two for real Gmail delivery).
+      #
+      # How to create a Google App password:
+      #   https://myaccount.google.com/security -> enable 2SV -> App passwords
+      #   -> "Select app" = Mail, "Select device" = Other -> copy the 16 chars.
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false

@@ -7,10 +7,13 @@ const fs = require('fs-extra');
 const path = require('path');
 const qrcode = require('qrcode');
 const { MongoClient } = require('mongodb');
+const bcrypt = require('bcryptjs'); // Import bcryptjs
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'school-event-secret-key-change-in-prod';
+const BCRYPT_SALT_ROUNDS = 10; // For password hashing
 const fileToCollection = new Map();
 
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
@@ -18,15 +21,117 @@ fs.ensureDirSync(dataDir);
 const usersFile = path.join(dataDir, 'users.json');
 const eventsFile = path.join(dataDir, 'events.json');
 const attendanceFile = path.join(dataDir, 'attendance.json');
+const registrationOtpsFile = path.join(dataDir, 'registrationOtps.json');
 fileToCollection.set(usersFile, 'users');
 fileToCollection.set(eventsFile, 'events');
 fileToCollection.set(attendanceFile, 'attendance');
+fileToCollection.set(registrationOtpsFile, 'registrationOtps');
 const ATTENDANCE_TIMEOUT_MIN = parseInt(process.env.ATT_TIMEOUT_MIN || '60', 10);
 const DEFAULT_ADMIN_USERNAME = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || '@LCCADMIN2026';
 const DEFAULT_ADMIN_FULLNAME = process.env.DEFAULT_ADMIN_FULLNAME || 'System Admin';
 const MONGODB_URI = (process.env.MONGODB_URI_DIRECT || process.env.MONGODB_URI || '').trim();
 const MONGODB_DB_NAME = (process.env.MONGODB_DB_NAME || 'attendify').trim();
+const GMAIL_USER = (process.env.GMAIL_USER || '').trim();
+const GMAIL_APP_PASSWORD = (process.env.GMAIL_APP_PASSWORD || '').trim();
+const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resends
+
+// ----- Nodemailer (Gmail) transport -----
+let mailTransporter = null;
+try {
+  if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+    mailTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: GMAIL_USER,
+        pass: GMAIL_APP_PASSWORD,
+      },
+    });
+  }
+} catch (err) {
+  console.warn('[mail] Failed to initialize Gmail transport:', err?.message || err);
+  mailTransporter = null;
+}
+
+const formatAppName = () => 'School Event Manager';
+
+const sendEmailCode = async ({ toEmail, otp, username }) => {
+  if (!toEmail) return { ok: false, reason: 'no-recipient' };
+  const subject = `Your ${formatAppName()} verification code is ${otp}`;
+  const text = [
+    `Hi ${username || 'there'},`,
+    '',
+    `Welcome to ${formatAppName()}!`,
+    '',
+    `Your 6-digit verification code is: ${otp}`,
+    `This code will expire in 10 minutes.`,
+    '',
+    `If you did not create an account, you can safely ignore this email.`,
+    '',
+    `— The ${formatAppName()} Team`,
+  ].join('\n');
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
+      <h2 style="margin: 0 0 16px; color: #4F46E5;">${formatAppName()}</h2>
+      <p style="font-size: 15px;">Hi ${username || 'there'},</p>
+      <p style="font-size: 15px;">Welcome! Use the verification code below to activate your account:</p>
+      <div style="text-align:center; margin: 24px 0;">
+        <div style="display:inline-block; font-size: 32px; letter-spacing: 12px; padding: 14px 28px; border-radius: 10px; background: #EEF2FF; color: #4338CA; font-weight: 700;">${otp}</div>
+      </div>
+      <p style="font-size: 14px; color: #555;">This code will expire in 10 minutes.</p>
+      <p style="font-size: 14px; color: #888;">If you did not create an account, you can safely ignore this email.</p>
+    </div>`;
+
+  // Always log the OTP so testing works even without Gmail configured.
+  console.log(`[mail][code] Email=${toEmail} Username=${username} OTP=${otp}`);
+
+  if (!mailTransporter) {
+    return { ok: false, reason: 'gmail-not-configured', otp };
+  }
+  try {
+    const info = await mailTransporter.sendMail({
+      from: `${formatAppName()} <${GMAIL_USER}>`,
+      to: toEmail,
+      subject,
+      text,
+      html,
+    });
+    return { ok: true, info };
+  } catch (err) {
+    console.error('[mail] Send failed:', err?.message || err);
+    return { ok: false, reason: 'send-failed', error: String(err?.message || err), otp };
+  }
+};
+
+const generateOtp = () => {
+  // 6-digit code, no leading zeros.
+  const n = Math.floor(100000 + Math.random() * 900000);
+  return String(n);
+};
+
+const setUserOtp = (user, otp, now = Date.now()) => {
+  user.verificationOtp = String(otp);
+  user.verificationOtpExpiry = now + OTP_EXPIRY_MS;
+  user.verificationOtpLastSent = now;
+  // Legacy fields, kept for compat:
+  user.verificationToken = uuidv4();
+  user.verificationTokenExpiry = now + OTP_EXPIRY_MS;
+};
+
+const isValidOtpForUser = (user, candidate, now = Date.now()) => {
+  if (!user) return { ok: false, code: 'NO_USER' };
+  if (user.isVerified === true) return { ok: false, code: 'ALREADY_VERIFIED' };
+  const stored = String(user.verificationOtp || '');
+  if (!stored) return { ok: false, code: 'NO_CODE' };
+  const exp = parseInt(user.verificationOtpExpiry || '0', 10);
+  if (!exp || now > exp) return { ok: false, code: 'EXPIRED' };
+  if (String(candidate || '').trim() !== stored) return { ok: false, code: 'WRONG_CODE' };
+  return { ok: true };
+};
 
 // Middleware
 app.set('trust proxy', 1);
@@ -87,16 +192,56 @@ const syncCollectionFromMongoIfAny = async (file, collectionName) => {
 
 const initializeMongoMirror = async () => {
   if (!MONGODB_URI) {
-    console.log('[mongo] MONGODB_URI not set, using JSON file storage only.');
+    console.warn(
+      '[mongo] ⚠️  MONGODB_URI not set — data is stored ONLY in local JSON files.\n' +
+      '       On Render free tier this means ALL accounts/events/attendance are LOST\n' +
+      '       on every redeploy or container restart. Fix this:\n' +
+      '         1. Go to Render dashboard → your service → Environment\n' +
+      '         2. Add env var MONGODB_URI with your MongoDB Atlas connection string\n' +
+      '            (e.g. mongodb+srv://<user>:<pw>@cluster0.xyz.mongodb.net/?retryWrites=true&w=majority)\n' +
+      '         3. Save Changes → wait for auto-redeploy.',
+    );
     return;
   }
-  mongoClient = new MongoClient(MONGODB_URI);
-  await mongoClient.connect();
-  mongoDb = mongoClient.db(MONGODB_DB_NAME);
-  console.log(`[mongo] Connected (${MONGODB_DB_NAME}).`);
-  await syncCollectionFromMongoIfAny(usersFile, 'users');
-  await syncCollectionFromMongoIfAny(eventsFile, 'events');
-  await syncCollectionFromMongoIfAny(attendanceFile, 'attendance');
+  try {
+    mongoClient = new MongoClient(MONGODB_URI, {
+      connectTimeoutMS: 15000,
+      serverSelectionTimeoutMS: 15000,
+    });
+    await mongoClient.connect();
+    mongoDb = mongoClient.db(MONGODB_DB_NAME);
+    console.log(`[mongo] ✅ Connected to MongoDB database "${MONGODB_DB_NAME}".`);
+    console.log('[mongo] Persistent collections: users, events, attendance, registrationOtps');
+    const collections = [
+      [usersFile, 'users'],
+      [eventsFile, 'events'],
+      [attendanceFile, 'attendance'],
+      [registrationOtpsFile, 'registrationOtps'],
+    ];
+    for (const [file, name] of collections) {
+      try {
+        await syncCollectionFromMongoIfAny(file, name);
+      } catch (collErr) {
+        console.error(`[mongo] Failed to sync collection "${name}":`, collErr?.message || collErr);
+      }
+    }
+    console.log('[mongo] ✅ All collections synced.');
+  } catch (err) {
+    const msg = err?.message || String(err);
+    console.error('[mongo] ❌ MongoDB connection FAILED — falling back to JSON file storage.');
+    if (msg.toLowerCase().includes('authentication') || msg.toLowerCase().includes('credential')) {
+      console.error('[mongo]    → Root cause: Authentication failed. Double-check your MONGODB_URI password or database user.');
+    } else if (msg.toLowerCase().includes('ip') || msg.toLowerCase().includes('whitelist') || msg.toLowerCase().includes('allowlist')) {
+      console.error('[mongo]    → Root cause: MongoDB Atlas IP not whitelisted. In Atlas, go to Network Access → Add IP Address → Allow Access from Anywhere (0.0.0.0/0) for Render.');
+    } else if (msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('server selection')) {
+      console.error('[mongo]    → Root cause: Connection timed out. Check MONGODB_URI spelling, cluster name, and whether Atlas cluster is currently paused.');
+    } else if (msg.toLowerCase().includes('dns') || msg.toLowerCase().includes('getaddrinfo')) {
+      console.error('[mongo]    → Root cause: DNS/network failure. Double-check your MONGODB_URI hostname.');
+    }
+    console.error(`[mongo]    Raw error: ${msg}`);
+    mongoClient = null;
+    mongoDb = null;
+  }
 };
 const normalizeStudentId = (value) => String(value || '').trim().toLowerCase();
 const hasDuplicateStudentId = (users, studentId, exceptUserId = null) => {
@@ -115,6 +260,26 @@ const isFacultyApproved = (user) => {
   if (!user || user.role !== 'faculty') return true;
   return user.isApproved === true;
 };
+
+// Password Hashing and Validation
+const hashPassword = async (password) => {
+  return await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+};
+
+const comparePassword = async (password, hash) => {
+  return await bcrypt.compare(password, hash);
+};
+
+const isStrongPassword = (password) => {
+  // At least 8 characters long
+  // Contains at least one uppercase letter
+  // Contains at least one lowercase letter
+  // Contains at least one digit
+  // Contains at least one special character
+  const strongPasswordRegex = new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*])(?=.{8,})');
+  return strongPasswordRegex.test(password);
+};
+
 const toPublicUser = (u) => ({
   id: u.id,
   username: u.username,
@@ -124,9 +289,10 @@ const toPublicUser = (u) => ({
   course: u.course || '',
   section: u.section || '',
   isApproved: isFacultyApproved(u),
+  isVerified: u.isVerified || false,
 });
 
-const ensureDefaultAdmin = () => {
+const ensureDefaultAdmin = async () => {
   const users = loadData(usersFile);
   const username = String(DEFAULT_ADMIN_USERNAME).trim();
   if (!username) return;
@@ -134,16 +300,18 @@ const ensureDefaultAdmin = () => {
   let changed = false;
   const existing = users.find(u => String(u.username).toLowerCase() === username.toLowerCase());
   if (!existing) {
+    const hashedPassword = await hashPassword(DEFAULT_ADMIN_PASSWORD);
     users.push({
       id: uuidv4(),
       username,
-      password: DEFAULT_ADMIN_PASSWORD,
+      password: hashedPassword,
       role: 'admin',
       fullName: DEFAULT_ADMIN_FULLNAME,
       studentId: '',
       course: '',
       section: '',
       isApproved: true,
+      isVerified: true,
     });
     changed = true;
   } else {
@@ -151,8 +319,12 @@ const ensureDefaultAdmin = () => {
       existing.role = 'admin';
       changed = true;
     }
-    if (existing.password !== DEFAULT_ADMIN_PASSWORD) {
-      existing.password = DEFAULT_ADMIN_PASSWORD;
+    // If password is stored as plaintext (unhashed), re-hash it.
+    if (String(existing.password).length < 20 || !String(existing.password).startsWith('$2')) {
+      const hashedPassword = await hashPassword(
+        String(existing.password).trim().isNotEmpty ? String(existing.password).trim() : DEFAULT_ADMIN_PASSWORD
+      );
+      existing.password = hashedPassword;
       changed = true;
     }
     if (!existing.fullName) {
@@ -161,6 +333,10 @@ const ensureDefaultAdmin = () => {
     }
     if (existing.isApproved !== true) {
       existing.isApproved = true;
+      changed = true;
+    }
+    if (existing.isVerified !== true) {
+      existing.isVerified = true;
       changed = true;
     }
   }
@@ -213,40 +389,108 @@ app.get('/', (req, res) => {
 });
 
 // Register
-app.post('/api/register', (req, res) => {
-  const { username, password, role, fullName, studentId, course, section } = req.body;
+app.post('/api/register', async (req, res) => {
+  const { username, password, role, fullName, studentId, course, section, email,
+          registrationOtp, registrationOtpRef } = req.body;
   const users = loadData(usersFile);
-  
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Invalid payload' });
-  }
-  if (users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase())) {
-    return res.status(400).json({ error: 'Username already exists' });
-  }
+
   if (!['student', 'faculty'].includes(role)) {
     return res.status(400).json({ error: 'Public registration is only for student/faculty' });
   }
+
+  const identifier = role === 'student' ? email : username;
+  if (!identifier || !password) {
+    return res.status(400).json({ error: role === 'student' ? 'Email and password are required' : 'Username and password are required' });
+  }
+  if (!isStrongPassword(password)) {
+    return res.status(400).json({
+      error: 'Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one digit, and one special character (!@#$%^&*)',
+    });
+  }
+
+  // -------- STUDENT: PRE-REGISTRATION OTP CHECK FIRST --------
+  let verifiedStudentEmail = null;
   if (role === 'student') {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Enter a valid Gmail / email address.' });
+    }
+    if (!registrationOtp || !String(registrationOtp).trim()) {
+      return res.status(400).json({ error: 'Enter the 6-digit code sent to your email first. If you did not get one, tap "Send verification code".' });
+    }
+    // Duplicate email check BEFORE consuming OTP
+    if (findUserByHandle(users, normalizedEmail)) {
+      return res.status(409).json({ error: 'This email is already registered. Try logging in or use "Reset Password".' });
+    }
     if (!fullName || !studentId || !course || !section) {
       return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
     }
+    // VALIDATE pre-registration OTP (consume it — one-time use)
+    const check = await consumeRegistrationOtp(
+      normalizedEmail,
+      registrationOtp,
+      registrationOtpRef || '',
+    );
+    if (!check.ok) {
+      switch (check.error) {
+        case 'EXPIRED':
+          return res.status(410).json({ error: check.message });
+        case 'WRONG_CODE':
+        case 'TOO_MANY_ATTEMPTS':
+          return res.status(401).json({ error: check.message });
+        case 'NO_PENDING':
+          return res.status(400).json({ error: check.message });
+        case 'BAD_INPUT':
+        default:
+          return res.status(400).json({ error: check.message });
+      }
+    }
+    verifiedStudentEmail = normalizedEmail;
+  }
+
+  // -------- Duplicate / ID checks AFTER email verified for student --------
+  if (users.find(u => String(u.username).toLowerCase() === String(role === 'student'
+    ? verifiedStudentEmail.toLowerCase()
+    : username).toLowerCase())) {
+    return res.status(400).json({ error: role === 'student' ? 'This email is already registered.' : 'Username already exists' });
   }
   if (hasDuplicateStudentId(users, studentId)) {
     return res.status(400).json({ error: 'This ID is already have' });
   }
-  
+
+  const hashedPassword = await hashPassword(password);
+  const normalizedEmail = role === 'student'
+    ? verifiedStudentEmail
+    : (email || username || '').toString().trim();
+  // For STUDENTS: use the email as the canonical username so they can log in
+  // with just their email address. Also lower-case it for stable lookup.
+  const canonicalUsername = role === 'student'
+    ? verifiedStudentEmail
+    : username;
+
   const newUser = {
     id: uuidv4(),
-    username,
-    password,
+    username: canonicalUsername,
+    email: normalizedEmail || username,
+    password: hashedPassword,
     role,
     fullName: fullName || '',
     studentId: studentId || '',
     course: course || '',
     section: section || '',
     isApproved: role === 'faculty' ? false : true,
+    // STUDENT email was ALREADY PROVEN via pre-registration OTP before we got here.
+    // So set isVerified=true IMMEDIATELY — no second verification gate on login.
+    isVerified: true,
   };
-  
+
+  if (role === 'faculty') {
+    // Faculty: no OTP flow; legacy token-based admin approval.
+    newUser.verificationToken = uuidv4();
+    newUser.verificationTokenExpiry = Date.now() + 3600 * 1000;
+    newUser.isVerified = false; // faculty require admin approval to verify
+  }
+
   users.push(newUser);
   saveData(usersFile, users);
 
@@ -257,66 +501,398 @@ app.post('/api/register', (req, res) => {
     });
   }
 
+  // -------- STUDENT SUCCESS: email already verified above. Issue JWT directly --------
   const token = jwt.sign(
     { id: newUser.id, username: newUser.username, role: newUser.role },
     JWT_SECRET,
     { expiresIn: '24h' },
   );
-  return res.json({
+  return res.status(201).json({
+    ok: true,
+    message: 'Account created and email verified. You are now logged in.',
     token,
     user: toPublicUser(newUser),
-    message: 'Account created',
+  });
+});
+
+// Verify Email (legacy token-based link; kept for direct email links and admin bypass scenarios)
+app.get('/api/verify-email', (req, res) => {
+  const { token } = req.query;
+  const users = loadData(usersFile);
+
+  const user = users.find(u => u.verificationToken === token);
+  if (!user) {
+    return res.status(400).json({ error: 'Invalid verification token' });
+  }
+  if (user.isVerified) {
+    return res.status(200).json({ message: 'Email already verified' });
+  }
+  if (user.verificationTokenExpiry < Date.now()) {
+    return res.status(400).json({ error: 'Verification token expired' });
+  }
+
+  user.isVerified = true;
+  user.verificationToken = undefined; // Clear token after use
+  user.verificationTokenExpiry = undefined; // Clear expiry after use
+  if (user.verificationOtp !== undefined) user.verificationOtp = undefined;
+  if (user.verificationOtpExpiry !== undefined) user.verificationOtpExpiry = undefined;
+  if (user.verificationOtpLastSent !== undefined) user.verificationOtpLastSent = undefined;
+  saveData(usersFile, users);
+
+  return res.status(200).json({ message: 'Email verified successfully. You can now log in.' });
+});
+
+// --- New OTP-based verification endpoints (used by the app) ---
+// Look up a user by username OR email (case insensitive)
+const findUserByHandle = (users, handle) => {
+  if (!handle) return null;
+  const h = String(handle).trim().toLowerCase();
+  if (!h) return null;
+  return (
+    users.find(u => String(u.username || '').toLowerCase() === h) ||
+    users.find(u => u && u.email && String(u.email).toLowerCase() === h) ||
+    null
+  );
+};
+
+// --- Pre-registration email OTP (students MUST prove email ownership BEFORE account creation) ---
+
+// Store a new pending registration OTP for a given email.
+// Returns { ref, otpPlain, expiresAtMs, lastSentAt, cooldownRemainingMs? }
+const storeRegistrationOtp = async (emailRaw) => {
+  const email = String(emailRaw || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { ok: false, error: 'INVALID_EMAIL', message: 'Enter a valid Gmail / email address.' };
+  }
+  const now = Date.now();
+  const pending = loadData(registrationOtpsFile);
+  // Clean up expired entries first (storage sweep)
+  const live = pending.filter(r => !r.expiresAtMs || r.expiresAtMs > now - 24 * 60 * 60 * 1000);
+  const existingIdx = live.findIndex(r => String(r.email).toLowerCase() === email);
+  const existing = existingIdx >= 0 ? live[existingIdx] : null;
+  // Enforce resend cooldown
+  if (existing && existing.lastSentAt && (now - existing.lastSentAt) < OTP_RESEND_COOLDOWN_MS) {
+    const waitMs = OTP_RESEND_COOLDOWN_MS - (now - existing.lastSentAt);
+    return {
+      ok: false,
+      error: 'COOLDOWN',
+      retryAfterSec: Math.max(1, Math.ceil(waitMs / 1000)),
+      message: `Wait ${Math.max(1, Math.ceil(waitMs / 1000))}s before requesting another code.`,
+    };
+  }
+  const otpPlain = generateOtp();
+  const otpHash = await bcrypt.hash(otpPlain, BCRYPT_SALT_ROUNDS);
+  const ref = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const expiresAtMs = now + OTP_EXPIRY_MS;
+  const record = {
+    ref,
+    email,
+    otpHash,
+    expiresAtMs,
+    lastSentAt: now,
+    createdAt: existing?.createdAt || now,
+    attempts: 0,
+  };
+  if (existingIdx >= 0) {
+    record.createdAt = live[existingIdx].createdAt;
+    live[existingIdx] = record;
+  } else {
+    live.push(record);
+  }
+  saveData(registrationOtpsFile, live);
+  return { ok: true, ref, otpPlain, expiresAtMs, lastSentAt: now, expiresInMs: OTP_EXPIRY_MS };
+};
+
+const consumeRegistrationOtp = async (emailRaw, otpCandidate, refRaw) => {
+  const email = String(emailRaw || '').trim().toLowerCase();
+  const candidate = String(otpCandidate || '').trim();
+  const ref = String(refRaw || '').trim();
+  if (!email || !candidate || !/^\d{6}$/.test(candidate)) {
+    return { ok: false, error: 'BAD_INPUT', message: 'Enter the 6-digit code sent to your email.' };
+  }
+  const now = Date.now();
+  const pending = loadData(registrationOtpsFile);
+  const idx = pending.findIndex(r => String(r.email).toLowerCase() === email && (!ref || r.ref === ref));
+  if (idx < 0) {
+    return { ok: false, error: 'NO_PENDING', message: 'No code pending for this email. Tap "Send verification code" first.' };
+  }
+  const rec = pending[idx];
+  rec.attempts = Number(rec.attempts || 0) + 1;
+  if (rec.expiresAtMs && rec.expiresAtMs < now) {
+    pending.splice(idx, 1);
+    saveData(registrationOtpsFile, pending);
+    return { ok: false, error: 'EXPIRED', message: 'This code has expired. Tap "Send verification code" to get a new one.' };
+  }
+  const match = await bcrypt.compare(candidate, rec.otpHash);
+  if (!match) {
+    if (rec.attempts >= 10) {
+      pending.splice(idx, 1);
+      saveData(registrationOtpsFile, pending);
+      return { ok: false, error: 'TOO_MANY_ATTEMPTS', message: 'Too many wrong attempts. Send a new code and try again.' };
+    }
+    saveData(registrationOtpsFile, pending);
+    return { ok: false, error: 'WRONG_CODE', message: 'Incorrect 6-digit code. Double-check your email (and Spam folder).' };
+  }
+  // Success: consume / delete the pending record so it can't be reused
+  pending.splice(idx, 1);
+  saveData(registrationOtpsFile, pending);
+  return { ok: true, email, message: 'Email ownership verified.' };
+};
+
+// Step 1 of student registration: send a 6-digit OTP to the email the student typed.
+// NO account is created here. This only proves the student controls the Gmail inbox.
+app.post('/api/send-registration-otp', async (req, res) => {
+  const { email } = req.body;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: 'Enter a valid Gmail / email address.' });
+  }
+  // Duplicate check: if email already belongs to a registered user, refuse to send.
+  const users = loadData(usersFile);
+  if (findUserByHandle(users, normalizedEmail)) {
+    return res.status(409).json({ error: 'This email is already registered. Try logging in or use "Reset Password".' });
+  }
+  const stored = await storeRegistrationOtp(normalizedEmail);
+  if (!stored.ok) {
+    if (stored.error === 'COOLDOWN') {
+      return res.status(429).json({
+        error: stored.message,
+        retryAfterSec: stored.retryAfterSec,
+      });
+    }
+    return res.status(400).json({ error: stored.message });
+  }
+  // Email delivery (best-effort; server console always prints the OTP as fallback)
+  let mailResult = { ok: false, reason: 'skipped' };
+  try {
+    mailResult = await sendEmailCode({
+      toEmail: normalizedEmail,
+      otp: stored.otpPlain,
+      username: normalizedEmail,
+    });
+  } catch (err) {
+    console.error('[send-registration-otp][mail] Error:', err);
+    mailResult = { ok: false, reason: 'exception', error: String(err?.message || err) };
+  }
+  return res.status(200).json({
+    ok: true,
+    ref: stored.ref,
+    expiresInMs: stored.expiresInMs,
+    email: normalizedEmail,
+    emailSent: mailResult.ok,
+    emailError: mailResult.ok ? undefined : (mailResult.reason || 'unknown'),
+    message: mailResult.ok
+      ? 'We sent a 6-digit verification code to your email. Check your inbox (and Spam folder).'
+      : 'A 6-digit verification code was generated. Check the server console log for "[mail][code]" to get your code, or check your Gmail inbox.',
+  });
+});
+
+app.post('/api/verify-otp', (req, res) => {
+  const { username, email, code } = req.body;
+  const handle = String(username || email || '').trim();
+  if (!handle) {
+    return res.status(400).json({ error: 'Username or email is required' });
+  }
+  const submitted = String(code || '').trim();
+  if (!/^\d{6}$/.test(submitted)) {
+    return res.status(400).json({ error: 'Enter the 6-digit code sent to your email' });
+  }
+
+  const users = loadData(usersFile);
+  const user = findUserByHandle(users, handle);
+  if (!user) return res.status(404).json({ error: 'Account not found' });
+
+  const check = isValidOtpForUser(user, submitted);
+  if (!check.ok) {
+    switch (check.code) {
+      case 'ALREADY_VERIFIED':
+        return res.status(400).json({ error: 'This account is already verified. Please log in.' });
+      case 'NO_CODE':
+        return res.status(400).json({ error: 'No verification code is pending. Tap "Resend code" first.' });
+      case 'EXPIRED':
+        return res.status(410).json({ error: 'This code has expired. Tap "Resend code" to get a new one.' });
+      case 'WRONG_CODE':
+      default:
+        return res.status(401).json({ error: 'Incorrect code. Double-check the email (and Spam folder) or tap "Resend code".' });
+    }
+  }
+
+  user.isVerified = true;
+  user.verificationOtp = undefined;
+  user.verificationOtpExpiry = undefined;
+  user.verificationOtpLastSent = undefined;
+  user.verificationToken = undefined;
+  user.verificationTokenExpiry = undefined;
+  saveData(usersFile, users);
+
+  return res.json({
+    ok: true,
+    message: 'Email verified successfully! You can now log in.',
+    user: toPublicUser(user),
+  });
+});
+
+app.post('/api/resend-otp', async (req, res) => {
+  const { username, email } = req.body;
+  const handle = String(username || email || '').trim();
+  if (!handle) {
+    return res.status(400).json({ error: 'Username or email is required' });
+  }
+
+  const users = loadData(usersFile);
+  const user = findUserByHandle(users, handle);
+  if (!user) return res.status(404).json({ error: 'Account not found. Please register first.' });
+  if (user.isVerified === true) {
+    return res.status(400).json({ error: 'This account is already verified. Please log in.' });
+  }
+
+  const now = Date.now();
+  const lastSent = parseInt(user.verificationOtpLastSent || '0', 10);
+  const tooSoon = lastSent && (now - lastSent) < OTP_RESEND_COOLDOWN_MS;
+  if (tooSoon) {
+    const waitSec = Math.max(1, Math.ceil((OTP_RESEND_COOLDOWN_MS - (now - lastSent)) / 1000));
+    return res.status(429).json({
+      error: `Please wait ${waitSec}s before requesting a new code.`,
+      retryAfterSec: waitSec,
+    });
+  }
+
+  if (!user.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email)) {
+    return res.status(400).json({ error: 'This account has no valid email address on file. Contact the school admin.' });
+  }
+
+  const otp = generateOtp();
+  setUserOtp(user, otp, now);
+  saveData(usersFile, users);
+
+  let mailResult = { ok: false, reason: 'skipped' };
+  try {
+    mailResult = await sendEmailCode({
+      toEmail: user.email,
+      otp,
+      username: user.fullName || user.username,
+    });
+  } catch (err) {
+    console.error('[resend-otp][mail] Error:', err);
+    mailResult = { ok: false, reason: 'exception', error: String(err?.message || err), otp };
+  }
+
+  return res.json({
+    messageCode: 'EMAIL_VERIFICATION_REQUIRED',
+    message: mailResult.ok
+      ? 'A new verification code has been emailed to you.'
+      : 'A new code was generated (check the server console). Also check your Spam folder.',
+    email: user.email,
+    expiresInMs: OTP_EXPIRY_MS,
+    emailSent: mailResult.ok,
+    emailError: mailResult.ok ? undefined : (mailResult.reason || 'unknown'),
   });
 });
 
 // Self-service password reset from login screen (non-admin only).
-app.post('/api/reset-password', (req, res) => {
+app.post('/api/reset-password', async (req, res) => {
   const { username, newPassword } = req.body;
   if (!username || !newPassword) {
-    return res.status(400).json({ error: 'Username and new password are required' });
+    return res.status(400).json({ error: 'Username/email and new password are required' });
   }
-  if (String(newPassword).length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (!isStrongPassword(newPassword)) {
+    return res.status(400).json({
+      error: 'Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one digit, and one special character (!@#$%^&*)',
+    });
   }
 
   const users = loadData(usersFile);
-  const idx = users.findIndex(
-    (u) => String(u.username).toLowerCase() === String(username).toLowerCase(),
-  );
-  if (idx === -1) return res.status(404).json({ error: 'Username not found' });
+  const user = findUserByHandle(users, username);
+  const idx = user ? users.findIndex(u => u.id === user.id) : -1;
+  if (idx === -1) return res.status(404).json({ error: 'Account not found' });
   if (users[idx].role === 'admin') {
     return res.status(403).json({ error: 'Admin password reset is restricted. Use admin panel.' });
   }
 
-  users[idx].password = String(newPassword);
+  const hashedPassword = await hashPassword(newPassword);
+  users[idx].password = hashedPassword;
   saveData(usersFile, users);
   return res.json({ message: 'Password reset successful' });
 });
 
 // Login
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   let users = loadData(usersFile);
-  let user = users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase());
+  // Accept identifier: if it contains "@" treat it as email lookup, else username lookup.
+  // findUserByHandle already handles both cases, case-insensitive.
+  let user = findUserByHandle(users, username);
 
   // Safety fallback: if default admin is missing in persisted data, recreate it.
   if (!user && String(username).toLowerCase() === String(DEFAULT_ADMIN_USERNAME).toLowerCase()) {
+    const hashedPassword = await hashPassword(DEFAULT_ADMIN_PASSWORD);
     users.push({
       id: uuidv4(),
       username: DEFAULT_ADMIN_USERNAME,
-      password: DEFAULT_ADMIN_PASSWORD,
+      password: hashedPassword,
       role: 'admin',
       fullName: DEFAULT_ADMIN_FULLNAME,
       studentId: '',
       course: '',
       section: '',
+      isApproved: true,
+      isVerified: true,
     });
     saveData(usersFile, users);
-    user = users.find(u => String(u.username).toLowerCase() === String(username).toLowerCase());
+    user = findUserByHandle(users, username);
   }
 
-  if (!user) return res.status(401).json({ error: 'Username not found' });
-  if (user.password !== password) return res.status(401).json({ error: 'Wrong password' });
+  if (!user) return res.status(401).json({ error: 'Email or username not found' });
+  if (user.isVerified !== true) {
+    // For STUDENT accounts: keep email-verification gate open. Try to auto-generate
+    // a fresh OTP + auto-send if (a) none is pending or (b) previous one expired, so the
+    // UI can present the OTP dialog to the user without an extra resend tap.
+    if (user.role === 'student' && user.email) {
+      const now = Date.now();
+      const currentExpiry = parseInt(user.verificationOtpExpiry || '0', 10);
+      const hasValidPending = Boolean(user.verificationOtp) && currentExpiry && currentExpiry > now;
+      if (!hasValidPending) {
+        const lastSent = parseInt(user.verificationOtpLastSent || '0', 10);
+        const cooldownPassed = !lastSent || (now - lastSent) >= OTP_RESEND_COOLDOWN_MS;
+        if (cooldownPassed) {
+          const otp = generateOtp();
+          setUserOtp(user, otp, now);
+          saveData(usersFile, users);
+          let mailResult = { ok: false, reason: 'skipped' };
+          try {
+            mailResult = await sendEmailCode({
+              toEmail: user.email,
+              otp,
+              username: user.fullName || user.username,
+            });
+          } catch (err) {
+            console.error('[login][mail] Error:', err);
+          }
+          return res.status(403).json({
+            error: 'Email not verified',
+            messageCode: 'EMAIL_VERIFICATION_REQUIRED',
+            message: mailResult.ok
+              ? 'We emailed a 6-digit code — enter it below to activate your account.'
+              : 'Enter the 6-digit verification code (check the server console or your email) to activate your account.',
+            username: user.username,
+            email: user.email,
+            expiresInMs: OTP_EXPIRY_MS,
+            emailSent: mailResult.ok,
+          });
+        }
+      }
+    }
+    return res.status(403).json({
+      error: user.role === 'faculty'
+        ? 'Account pending admin approval'
+        : 'Email not verified',
+      messageCode: user.role === 'student' ? 'EMAIL_VERIFICATION_REQUIRED' : 'PENDING_ADMIN_APPROVAL',
+      username: user.username,
+      email: user.email || '',
+    });
+  }
+  const passwordMatch = await comparePassword(password, user.password);
+  if (!passwordMatch) return res.status(401).json({ error: 'Wrong password' });
   if (!isFacultyApproved(user)) {
     return res.status(403).json({ error: 'Faculty account is pending admin approval' });
   }
@@ -620,7 +1196,7 @@ app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
   res.json(users);
 });
 
-app.post('/api/users', authenticateToken, requireAdmin, (req, res) => {
+app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
   const { username, password, role, fullName, studentId, course, section } = req.body;
   const users = loadData(usersFile);
   if (!username || !password || !['student','admin','faculty'].includes(role)) {
@@ -637,23 +1213,25 @@ app.post('/api/users', authenticateToken, requireAdmin, (req, res) => {
   if (hasDuplicateStudentId(users, studentId)) {
     return res.status(400).json({ error: 'This ID is already have' });
   }
+  const hashedPassword = await hashPassword(String(password));
   const u = {
     id: uuidv4(),
     username,
-    password,
+    password: hashedPassword,
     role,
     fullName: fullName || '',
     studentId: studentId || '',
     course: course || '',
     section: section || '',
     isApproved: true,
+    isVerified: true,
   };
   users.push(u);
   saveData(usersFile, users);
   res.json(toPublicUser(u));
 });
 
-app.patch('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
+app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   const users = loadData(usersFile);
   const idx = users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
@@ -711,7 +1289,7 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
   if (section != null) next.section = String(section).trim();
   if (password != null) {
     if (!String(password)) return res.status(400).json({ error: 'Password is required' });
-    next.password = String(password);
+    next.password = await hashPassword(String(password));
   }
   if (isApproved != null) {
     if (next.role !== 'faculty' && Boolean(isApproved) == false) {
@@ -772,7 +1350,7 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
   res.json(toPublicUser(u));
 });
 
-app.post('/api/users/:id/reset-password', authenticateToken, requireAdmin, (req, res) => {
+app.post('/api/users/:id/reset-password', authenticateToken, requireAdmin, async (req, res) => {
   const { newPassword } = req.body;
   if (!newPassword) return res.status(400).json({ error: 'New password is required' });
   if (String(newPassword).length < 6) {
@@ -782,7 +1360,7 @@ app.post('/api/users/:id/reset-password', authenticateToken, requireAdmin, (req,
   const users = loadData(usersFile);
   const idx = users.findIndex((u) => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  users[idx].password = String(newPassword);
+  users[idx].password = await hashPassword(String(newPassword));
   saveData(usersFile, users);
   return res.json({ message: 'Password reset successful' });
 });
@@ -813,15 +1391,52 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+const ensureAllPasswordsHashed = async () => {
+  const users = loadData(usersFile);
+  let changed = false;
+  for (const u of users) {
+    if (u.password == null) continue;
+    const pw = String(u.password);
+    // bcrypt hashes are exactly ~60 chars and always start with $2
+    if (pw.length < 20 || !pw.startsWith('$2')) {
+      u.password = await hashPassword(pw || String(DEFAULT_ADMIN_PASSWORD));
+      changed = true;
+    }
+    // Ensure all accounts have a sensible isVerified field
+    if (u.isVerified !== true && u.isVerified !== false) {
+      u.isVerified = true;
+      changed = true;
+    }
+    if (u.isApproved !== true && u.isApproved !== false && u.role === 'faculty') {
+      u.isApproved = false;
+      changed = true;
+    }
+    if (u.isApproved !== true && u.isApproved !== false && u.role !== 'faculty') {
+      u.isApproved = true;
+      changed = true;
+    }
+  }
+  if (changed) saveData(usersFile, users);
+};
+
 const start = async () => {
   try {
     await initializeMongoMirror();
   } catch (err) {
-    console.error('[mongo] Initialization failed, continuing with file storage:', err?.message || err);
+    console.error('[mongo] Initialization wrapper error, continuing with file storage:', err?.message || err);
   }
-  ensureDefaultAdmin();
+  await ensureAllPasswordsHashed();
+  await ensureDefaultAdmin();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`🚀  Server running at http://localhost:${PORT}`);
+    console.log(`🔗  Public endpoint: https://school-event-managements.onrender.com`);
+    console.log(`💾  Data layer:      ${mongoDb ? `MongoDB ("${MONGODB_DB_NAME}") ✅ PERSISTENT` : 'JSON files (not persistent on Render ⚠️)'}`);
+    console.log(`📧  Gmail SMTP:      ${(GMAIL_USER && GMAIL_APP_PASSWORD) ? `Configured (from=${GMAIL_USER}) ✅` : 'Not configured — OTPs logged ONLY to server console ⚠️'}`);
+    console.log(`🔐  JWT secret:      ${JWT_SECRET === 'school-event-secret-key-change-in-prod' ? '⚠️  USING DEFAULT (override JWT_SECRET env var!)' : 'Set via env var ✅'}`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('');
   });
 };
 

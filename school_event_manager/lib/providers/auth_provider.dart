@@ -2,6 +2,49 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 
+class SendOtpResult {
+  const SendOtpResult({
+    required this.ok,
+    this.message,
+    this.ref,
+    this.email,
+    this.expiresInMs,
+    this.emailSent = false,
+  });
+
+  final bool ok;
+  final String? message;
+  final String? ref;
+  final String? email;
+  final int? expiresInMs;
+  final bool emailSent;
+}
+
+class AuthActionResult {
+  const AuthActionResult({
+    this.errorMessage,
+    this.messageCode,
+    this.email,
+    this.username,
+    this.expiresInMs,
+    this.emailSent,
+    this.emailError,
+    this.succeeded = false,
+  });
+
+  final String? errorMessage;
+  final String? messageCode;
+  final String? email;
+  final String? username;
+  final int? expiresInMs;
+  final bool? emailSent;
+  final String? emailError;
+  final bool succeeded;
+
+  bool get isEmailVerificationRequired =>
+      messageCode == 'EMAIL_VERIFICATION_REQUIRED';
+}
+
 final authProvider = StateNotifierProvider<AuthNotifier, AsyncValue<User?> >((ref) => AuthNotifier());
 
 class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
@@ -24,31 +67,54 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     }
   }
 
-  Future<String?> login(String username, String password) async {
+  Future<AuthActionResult> login(String username, String password) async {
     if (username.trim().isEmpty || password.isEmpty) {
       state = const AsyncValue.data(null);
-      return 'Enter username and password';
+      return const AuthActionResult(errorMessage: 'Enter username and password');
     }
     state = const AsyncValue.loading();
     try {
-      final user = await AuthService.login(username, password);
+      final (user, _) = await AuthService.login(username, password);
       if (user != null) {
         state = AsyncValue.data(user);
-        return null;
+        return const AuthActionResult(succeeded: true);
       } else {
         state = const AsyncValue.data(null);
-        return 'Invalid username or password';
+        return const AuthActionResult(errorMessage: 'Invalid username or password');
       }
+    } on AuthFailure catch (e) {
+      state = const AsyncValue.data(null);
+      return AuthActionResult(
+        errorMessage: e.message,
+        messageCode: e.messageCode,
+        email: e.email,
+        username: e.username,
+        expiresInMs: e.expiresInMs,
+        emailSent: e.emailSent,
+        emailError: e.emailError,
+      );
     } catch (e) {
       state = const AsyncValue.data(null);
-      if (e is AuthFailure) {
-        return e.message;
-      }
-      return _cleanError(e);
+      return AuthActionResult(errorMessage: _cleanError(e));
     }
   }
 
-  Future<String?> register(
+  Future<SendOtpResult> sendRegistrationOtp(String email) async {
+    if (email.trim().isEmpty) {
+      return const SendOtpResult(ok: false, message: 'Enter your Gmail address first.');
+    }
+    final (ok, message, meta) = await AuthService.sendRegistrationOtp(email);
+    return SendOtpResult(
+      ok: ok,
+      message: message,
+      ref: meta?['ref']?.toString(),
+      email: meta?['email']?.toString(),
+      expiresInMs: meta?['expiresInMs'] as int?,
+      emailSent: meta?['emailSent'] == true,
+    );
+  }
+
+  Future<AuthActionResult> register(
     String username,
     String password,
     String role, {
@@ -56,14 +122,20 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     String? studentId,
     String? course,
     String? section,
+    String? email,
+    String? registrationOtp,
+    String? registrationOtpRef,
   }) async {
     if (username.trim().isEmpty || password.isEmpty) {
       state = const AsyncValue.data(null);
-      return 'Enter username and password';
+      return AuthActionResult(
+        errorMessage:
+            role == 'student' ? 'Enter email and password' : 'Enter username and password',
+      );
     }
     state = const AsyncValue.loading();
     try {
-      final user = await AuthService.register(
+      final (user, meta) = await AuthService.register(
         username,
         password,
         role,
@@ -71,20 +143,54 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
         studentId: studentId,
         course: course,
         section: section,
+        email: email,
+        registrationOtp: registrationOtp,
+        registrationOtpRef: registrationOtpRef,
       );
+      final messageCode = meta?['messageCode']?.toString();
+      final mEmail = meta?['email']?.toString();
+      final mUsername = meta?['username']?.toString();
+      final mExpiresInMs = meta?['expiresInMs'] as int?;
+      final mEmailSent = meta?['emailSent'] == true;
+      final mEmailError = meta?['emailError']?.toString();
       if (user != null) {
         state = AsyncValue.data(user);
-        return null;
+        return AuthActionResult(
+          succeeded: true,
+          messageCode: messageCode,
+          email: mEmail,
+          username: mUsername,
+          expiresInMs: mExpiresInMs,
+          emailSent: mEmailSent,
+          emailError: mEmailError,
+        );
       } else {
         state = const AsyncValue.data(null);
-        return 'Registration failed';
+        final msg = meta?['message']?.toString();
+        return AuthActionResult(
+          errorMessage: (msg ?? '').isEmpty ? 'Registration failed' : msg,
+          messageCode: messageCode,
+          email: mEmail,
+          username: mUsername,
+          expiresInMs: mExpiresInMs,
+          emailSent: mEmailSent,
+          emailError: mEmailError,
+        );
       }
+    } on AuthFailure catch (e) {
+      state = const AsyncValue.data(null);
+      return AuthActionResult(
+        errorMessage: e.message,
+        messageCode: e.messageCode,
+        email: e.email,
+        username: e.username,
+        expiresInMs: e.expiresInMs,
+        emailSent: e.emailSent,
+        emailError: e.emailError,
+      );
     } catch (e) {
       state = const AsyncValue.data(null);
-      if (e is AuthFailure) {
-        return e.message;
-      }
-      return _cleanError(e);
+      return AuthActionResult(errorMessage: _cleanError(e));
     }
   }
 

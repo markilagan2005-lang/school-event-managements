@@ -29,13 +29,22 @@ class Event {
     'attendees': attendees.map((a) => a.toJson()).toList(),
   };
 
+  static DateTime _toLocal(DateTime dt) => dt.isUtc ? dt.toLocal() : dt;
+
+  static DateTime? _parse(dynamic raw) {
+    if (raw == null) return null;
+    final parsed = DateTime.tryParse(raw.toString());
+    if (parsed == null) return null;
+    return _toLocal(parsed);
+  }
+
   factory Event.fromJson(Map<String, dynamic> json) => Event(
     id: json['id'] ?? '',
     name: json['name'] ?? '',
-    date: DateTime.tryParse(json['date'] ?? '') ?? DateTime.now(),
+    date: _parse(json['date']) ?? DateTime.now(),
     status: json['status'] ?? 'open',
-    startAt: json['startAt'] == null ? null : DateTime.tryParse(json['startAt'].toString()),
-    endAt: json['endAt'] == null ? null : DateTime.tryParse(json['endAt'].toString()),
+    startAt: _parse(json['startAt']),
+    endAt: _parse(json['endAt']),
     attendees: (json['attendees'] as List<dynamic>?)
         ?.map((a) => Attendee.fromJson(a as Map<String, dynamic>))
         .toList() ?? [],
