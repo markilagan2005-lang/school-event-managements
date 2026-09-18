@@ -23,6 +23,13 @@ class ApiHttpException implements Exception {
   }
 }
 
+class TransientHttpStatusException implements Exception {
+  const TransientHttpStatusException(this.statusCode);
+  final int statusCode;
+  @override
+  String toString() => 'Transient HTTP status: $statusCode';
+}
+
 class ApiClient {
   ApiClient(String baseUrl) : baseUrl = _normalizeBaseUrl(baseUrl);
 
@@ -191,6 +198,7 @@ class ApiClient {
   }
 
   static bool _isTransientNetworkError(Object e) {
+    if (e is TransientHttpStatusException) return true;
     if (e is TimeoutException || e is SocketException) return true;
     if (e is http.ClientException) {
       final m = e.message.toLowerCase();
@@ -200,14 +208,39 @@ class ApiClient {
     return s.contains('failed host lookup') || s.contains('connection refused');
   }
 
+  static const List<Duration> _retryBackoffs = [
+    Duration.zero,
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+    Duration(seconds: 15),
+  ];
+
   Future<http.Response> _runWithRetry(Future<http.Response> Function() action) async {
-    try {
-      return await action();
-    } catch (e) {
-      if (!_isTransientNetworkError(e)) rethrow;
-      await Future<void>.delayed(const Duration(seconds: 2));
-      return action();
+    const totalAttempts = 4;
+    Object? lastError;
+    for (var i = 0; i < totalAttempts; i++) {
+      if (i > 0) {
+        final delay = _retryBackoffs[i];
+        if (delay > Duration.zero) {
+          await Future<void>.delayed(delay);
+        }
+      }
+      try {
+        final res = await action();
+        if (res.statusCode == 502 || res.statusCode == 503) {
+          lastError = TransientHttpStatusException(res.statusCode);
+          continue;
+        }
+        return res;
+      } catch (e) {
+        lastError = e;
+        if (!_isTransientNetworkError(e)) rethrow;
+      }
     }
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, StackTrace.current);
+    }
+    throw StateError('Retry loop exhausted without a result');
   }
 
   static Future<void> setBaseUrl(String url) async {
