@@ -248,27 +248,39 @@ class ApiClient {
     await prefs.setString('api_base_url', _normalizeBaseUrl(url));
   }
 
+  static String _finalSanitizeUrl(String url, String fallbackUrl) {
+    final production = _normalizeBaseUrl(apiBaseUrlDefault);
+    final u = _normalizeBaseUrl(url);
+    final lower = u.toLowerCase();
+    if (lower.contains('onrender.com')) return u;
+    if (!lower.startsWith('https://')) return production;
+    if (_isLocalOrLanUrl(u)) return production;
+    if (u.isEmpty) return production;
+    return u;
+  }
+
   static Future<String> getBaseUrl({String fallback = apiBaseUrlDefault}) async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final fallbackUrl = _normalizeBaseUrl(fallback);
+    final production = _normalizeBaseUrl(apiBaseUrlDefault);
     if (lockServerSettings) {
-      await prefs.setString('api_base_url', fallbackUrl);
-      return fallbackUrl;
+      await prefs.setString('api_base_url', production);
+      await prefs.reload();
+      return production;
     }
     final saved = prefs.getString('api_base_url');
     if (saved == null || saved.trim().isEmpty) {
-      return fallbackUrl;
+      return _finalSanitizeUrl(fallbackUrl, production);
     }
 
-    final savedUrl = _normalizeBaseUrl(saved);
+    var savedUrl = _normalizeBaseUrl(saved);
 
-    // If an old local/LAN URL is still stored on a device, force migration to
-    // the deployed backend so login/register/QR flows work across networks.
     if (_isLocalOrLanUrl(savedUrl)) {
-      await prefs.setString('api_base_url', fallbackUrl);
-      return fallbackUrl;
+      savedUrl = production;
+      await prefs.setString('api_base_url', savedUrl);
     }
 
-    return savedUrl;
+    return _finalSanitizeUrl(savedUrl, production);
   }
 }

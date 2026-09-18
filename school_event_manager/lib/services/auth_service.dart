@@ -19,7 +19,7 @@ class AuthService {
   static const String _userKey = 'current_user';
   static const String _tokenKey = 'auth_token';
 
-  static AuthFailure _authFailureFromServerError(Object e) {
+  static Future<AuthFailure> _authFailureFromServerError(Object e) async {
     final raw = e.toString();
     Map<String, dynamic>? decoded;
     if (e is ApiHttpException) {
@@ -43,13 +43,14 @@ class AuthService {
     final emailSent = decoded?['emailSent'] == true;
     final emailError = decoded?['emailError']?.toString();
 
+    final baseForError = (await ApiClient.getBaseUrl()).replaceFirst(RegExp(r'/api$'), '');
     if (e is TimeoutException) {
-      return const AuthFailure(AuthFailureCode.unknown, 'Cannot connect to server');
+      return AuthFailure(AuthFailureCode.unknown, 'Cannot connect to server (timeout). URL: $baseForError');
     }
     if (raw.contains('SocketException') ||
         raw.toLowerCase().contains('failed host lookup') ||
         raw.toLowerCase().contains('connection refused')) {
-      return const AuthFailure(AuthFailureCode.unknown, 'Cannot connect to server');
+      return AuthFailure(AuthFailureCode.unknown, 'Cannot connect to server. Check WiFi/Data. URL: $baseForError');
     }
     if (raw.contains('Request failed (404)')) {
       return const AuthFailure(AuthFailureCode.unknown, 'Server URL is wrong');
@@ -131,13 +132,14 @@ class AuthService {
         }
       } else {
         final raw = e.toString().toLowerCase();
+        final url = (await ApiClient.getBaseUrl()).replaceFirst(RegExp(r'/api$'), '');
         if (raw.contains('socketexception') ||
             raw.contains('failed host lookup') ||
             raw.contains('connection refused') ||
             raw.contains('connection reset')) {
-          detail = 'Cannot reach server. Make sure you have Internet. If testing locally, start node server.js and set API_BASE_URL to your PC IP (for Android emulator use 10.0.2.2:3000).';
+          detail = 'Cannot reach server. Make sure you have Internet. If testing locally, start node server.js and set API_BASE_URL to your PC IP (for Android emulator use 10.0.2.2:3000). (URL: $url)';
         } else if (e is TimeoutException) {
-          detail = 'Server took too long to reply. Render free tier sleeps after inactivity — wait 30-60 seconds and try again.';
+          detail = 'Server took too long to reply. Render free tier sleeps after inactivity — wait 30-60 seconds and try again. (URL: $url)';
         }
       }
       return (false, detail ?? 'Could not send verification code. Try again.', null);
@@ -191,7 +193,7 @@ class AuthService {
       return (user, meta);
     } catch (e) {
       if (e is AuthFailure) rethrow;
-      final failure = _authFailureFromServerError(e);
+      final failure = await _authFailureFromServerError(e);
       throw AuthFailure(
         failure.code,
         failure.message.isNotEmpty ? failure.message : 'Cannot connect to server',
@@ -222,7 +224,7 @@ class AuthService {
       return (user, null);
     } catch (e) {
       if (e is AuthFailure) rethrow;
-      final failure = _authFailureFromServerError(e);
+      final failure = await _authFailureFromServerError(e);
       throw AuthFailure(
         failure.code,
         failure.message.isNotEmpty ? failure.message : 'Cannot connect to server',
