@@ -41,14 +41,28 @@ const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resends
 let mailTransporter = null;
 try {
   if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+    // Use port 587 with STARTTLS instead of port 465.
+    // Render Free Tier egress often blocks 465 (implicit TLS) but allows 587.
     mailTransporter = nodemailer.createTransport({
-      service: 'gmail',
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false,
+      requireTLS: true,
       auth: {
         user: GMAIL_USER,
         pass: GMAIL_APP_PASSWORD,
+      },
+      // Protect against "hang forever" behavior on blocked / misconfigured SMTP.
+      connectionTimeout: 12000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      pool: false,
+      maxConnections: 1,
+      maxMessages: 10,
+      tls: {
+        rejectUnauthorized: true,
+        servername: 'smtp.gmail.com',
+        minVersion: 'TLSv1.2',
       },
     });
   }
@@ -56,6 +70,8 @@ try {
   console.warn('[mail] Failed to initialize Gmail transport:', err?.message || err);
   mailTransporter = null;
 }
+
+const SMTP_SEND_TIMEOUT_MS = 15000;
 
 const formatAppName = () => 'School Event Manager';
 
@@ -92,16 +108,42 @@ const sendEmailCode = async ({ toEmail, otp, username }) => {
   if (!mailTransporter) {
     return { ok: false, reason: 'gmail-not-configured', otp };
   }
+
+  // Race nodemailer.sendMail against a hard 15-second timeout so the API
+  // response NEVER hangs 90s just because SMTP is blocked.
+  let sendPromise;
   try {
-    const info = await mailTransporter.sendMail({
+    sendPromise = mailTransporter.sendMail({
       from: `${formatAppName()} <${GMAIL_USER}>`,
       to: toEmail,
       subject,
       text,
       html,
     });
-    return { ok: true, info };
   } catch (err) {
+    console.error('[mail] sendMail start sync error:', err?.message || err);
+    return { ok: false, reason: 'send-start-failed', error: String(err?.message || err), otp };
+  }
+
+  let timeoutRef = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutRef = setTimeout(() => {
+      resolve({ __timedOut: true });
+    }, SMTP_SEND_TIMEOUT_MS);
+  });
+
+  try {
+    const result = await Promise.race([sendPromise, timeoutPromise]);
+    if (timeoutRef) clearTimeout(timeoutRef);
+    if (result && result.__timedOut) {
+      const msg = `smtp-timeout-after-${SMTP_SEND_TIMEOUT_MS}ms (Render egress may block Gmail SMTP)`;
+      console.error(`[mail] Send timed out: ${msg}`);
+      return { ok: false, reason: 'send-timeout', error: msg, otp };
+    }
+    console.log(`[mail] Send OK: accepted=${JSON.stringify(result?.accepted || [])} messageId=${result?.messageId || ''}`);
+    return { ok: true, info: { messageId: result?.messageId, accepted: result?.accepted || [] } };
+  } catch (err) {
+    if (timeoutRef) clearTimeout(timeoutRef);
     console.error('[mail] Send failed:', err?.message || err);
     return { ok: false, reason: 'send-failed', error: String(err?.message || err), otp };
   }
@@ -681,6 +723,7 @@ app.post('/api/send-registration-otp', async (req, res) => {
     email: normalizedEmail,
     emailSent: mailResult.ok,
     emailError: mailResult.ok ? undefined : (mailResult.reason || 'unknown'),
+    emailErrorFull: mailResult.ok ? undefined : (mailResult.error || undefined),
     message: mailResult.ok
       ? 'We sent a 6-digit verification code to your email. Check your inbox (and Spam folder).'
       : 'A 6-digit verification code was generated. Check the server console log for "[mail][code]" to get your code, or check your Gmail inbox.',
