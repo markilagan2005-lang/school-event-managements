@@ -307,6 +307,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     bool lastEmailSent = false;
     String? emailInlineError;
     String? otpInlineError;
+    // ---- Inline banner state for validation errors inside dialog ----
+    String? submitBannerError;
+    final passwordFieldKey = GlobalKey();
+    final scrollController = ScrollController();
+
+    // ---- Clear any leftover snackbars from Login page ----
+    final rootMessenger = MyApp.scaffoldMessengerKey.currentState;
+    rootMessenger?.clearSnackBars();
 
     List<String> buildSections() {
       if (selectedCourse == null || selectedYear == null) return const [];
@@ -327,10 +335,38 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return 'for $mins min $secs s';
     }
 
+    void scrollToPassword() {
+      final mountedRoute = ModalRoute.of(context);
+      final localController = scrollController;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!(mountedRoute?.isActive ?? false)) return;
+        final targetCtx = passwordFieldKey.currentContext;
+        final targetHasClients = localController.hasClients;
+        final targetMax = targetHasClients ? localController.position.maxScrollExtent : 0.0;
+        await Future<void>.delayed(const Duration(milliseconds: 220));
+        if (!(mountedRoute?.isActive ?? false)) return;
+        try {
+          if (targetCtx != null) {
+            final elementOk = targetCtx;
+            // ignore: use_build_context_synchronously
+            await Scrollable.ensureVisible(elementOk,
+                duration: const Duration(milliseconds: 350),
+                curve: Curves.easeOutCubic,
+                alignment: 0.1);
+          } else if (targetHasClients) {
+            localController.animateTo(
+              targetMax * 0.25,
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        } catch (_) {}
+      });
+    }
+
     showDialog<void>(
       context: context,
       builder: (context) {
-        final rootMessenger = MyApp.scaffoldMessengerKey.currentState;
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             void refresh(void Function() fn) {
@@ -361,12 +397,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               final email = emailController.text.trim();
               final emailOk = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email);
               if (!emailOk) {
-                refresh(() => emailInlineError = 'Enter a valid Gmail address (e.g. name@gmail.com).');
+                refresh(() {
+                  submitBannerError = null;
+                  emailInlineError = 'Enter a valid Gmail address (e.g. name@gmail.com).';
+                });
                 return;
               }
               refresh(() {
                 sendingOtp = true;
                 emailInlineError = null;
+                submitBannerError = null;
               });
               final res = await notifier.sendRegistrationOtp(email);
               if (!(routeActive?.isActive ?? false)) return;
@@ -376,6 +416,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 pendingOtpEmail = res.email ?? email.toLowerCase();
                 pendingOtpExpiresInMs = res.expiresInMs ?? 10 * 60 * 1000;
                 lastEmailSent = res.emailSent;
+                rootMessenger?.clearSnackBars();
                 rootMessenger?.showSnackBar(
                   SnackBar(
                     content: Text(
@@ -391,10 +432,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   studentStage = 2;
                   otpController.clear();
                   otpInlineError = null;
+                  submitBannerError = null;
                 });
+                scrollToPassword();
               } else {
                 refresh(() {
                   sendingOtp = false;
+                  submitBannerError = null;
                   emailInlineError = res.message ?? 'Could not send verification code. Try again.';
                 });
               }
@@ -429,12 +473,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 content: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: 430,
-                    maxHeight: MediaQuery.of(context).size.height * 0.72,
+                    maxHeight: MediaQuery.of(context).size.height * 0.78,
                   ),
                   child: SingleChildScrollView(
+                    controller: scrollController,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (submitBannerError != null)
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.red.shade200),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.error_outline, size: 18, color: Colors.red),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    submitBannerError!,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: Colors.red.shade900, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         // -------- Role selector (always visible so user can switch) --------
                         DropdownButtonFormField<String>(
                           initialValue: role,
@@ -451,6 +524,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               selectedCourse = null;
                               selectedYear = null;
                               selectedSection = null;
+                              submitBannerError = null;
                               if (role == 'student') {
                                 studentStage = 1;
                                 pendingOtpRef = null;
@@ -535,8 +609,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   Expanded(
                                     child: Text(
                                       lastEmailSent
-                                          ? 'Code sent to ${pendingOtpEmail ?? emailController.text.trim()}. Valid ${expiryLabel(pendingOtpExpiresInMs)}.'
-                                          : 'Code generated for ${pendingOtpEmail ?? emailController.text.trim()}. Check server logs: "[mail][code]". Valid ${expiryLabel(pendingOtpExpiresInMs)}.',
+                                          ? 'Code sent to ${pendingOtpEmail ?? emailController.text.trim()}. Valid ${expiryLabel(pendingOtpExpiresInMs)}. Scroll below to fill account form.'
+                                          : 'Code generated for ${pendingOtpEmail ?? emailController.text.trim()}. Check server logs: "[mail][code]". Valid ${expiryLabel(pendingOtpExpiresInMs)}. Scroll below to fill account form.',
                                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                             color: lastEmailSent
                                                 ? Theme.of(context).colorScheme.onPrimaryContainer
@@ -592,37 +666,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             ),
                             const SizedBox(height: 10),
-                            TextField(
-                              controller: passwordController,
-                              obscureText: obscureRegisterPassword,
-                              decoration: InputDecoration(
-                                labelText: 'Password',
-                                suffixIcon: IconButton(
-                                  tooltip: obscureRegisterPassword ? 'Show password' : 'Hide password',
-                                  onPressed: () => setStateDialog(
-                                      () => obscureRegisterPassword = !obscureRegisterPassword),
-                                  icon: Icon(obscureRegisterPassword
-                                      ? Icons.visibility_off
-                                      : Icons.visibility),
+                            Container(
+                              key: passwordFieldKey,
+                              child: TextField(
+                                controller: passwordController,
+                                obscureText: obscureRegisterPassword,
+                                decoration: InputDecoration(
+                                  labelText: 'Password',
+                                  prefixIcon: const Icon(Icons.lock_outline),
+                                  suffixIcon: IconButton(
+                                    tooltip: obscureRegisterPassword ? 'Show password' : 'Hide password',
+                                    onPressed: () => setStateDialog(
+                                        () => obscureRegisterPassword = !obscureRegisterPassword),
+                                    icon: Icon(obscureRegisterPassword
+                                        ? Icons.visibility_off
+                                        : Icons.visibility),
+                                  ),
                                 ),
                               ),
                             ),
                             const SizedBox(height: 10),
                             TextField(
                               controller: fullNameController,
-                              decoration: const InputDecoration(labelText: 'Full name'),
+                              decoration: const InputDecoration(
+                                labelText: 'Full name',
+                                prefixIcon: Icon(Icons.person_outline),
+                              ),
                             ),
                             const SizedBox(height: 10),
                             TextField(
                               controller: studentIdController,
-                              decoration: const InputDecoration(labelText: 'Student ID'),
+                              keyboardType: TextInputType.text,
+                              decoration: const InputDecoration(
+                                labelText: 'Student ID',
+                                prefixIcon: Icon(Icons.badge_outlined),
+                              ),
                             ),
                             const SizedBox(height: 10),
                             DropdownButtonFormField<String>(
                               initialValue: selectedCourse,
                               isExpanded: true,
                               menuMaxHeight: 320,
-                              decoration: const InputDecoration(labelText: 'Course'),
+                              decoration: const InputDecoration(
+                                labelText: 'Course',
+                                prefixIcon: Icon(Icons.school_outlined),
+                              ),
                               hint: const Text('Select course'),
                               items: courses
                                   .map(
@@ -657,7 +745,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             DropdownButtonFormField<int>(
                               initialValue: selectedYear,
                               isExpanded: true,
-                              decoration: const InputDecoration(labelText: 'Year Level'),
+                              decoration: const InputDecoration(
+                                labelText: 'Year Level',
+                                prefixIcon: Icon(Icons.calendar_today_outlined),
+                              ),
                               hint: const Text('Select year'),
                               items: const [
                                 DropdownMenuItem(value: 1, child: Text('1st Year')),
@@ -674,7 +765,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             DropdownButtonFormField<String>(
                               initialValue: selectedSection,
                               isExpanded: true,
-                              decoration: const InputDecoration(labelText: 'Section'),
+                              decoration: const InputDecoration(
+                                labelText: 'Section',
+                                prefixIcon: Icon(Icons.group_outlined),
+                              ),
                               hint: const Text('Select section'),
                               items: buildSections()
                                   .map(
@@ -690,6 +784,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   .toList(),
                               onChanged: (v) => setStateDialog(() => selectedSection = v),
                             ),
+                            const SizedBox(height: 8),
                           ],
                         ] else ...[
                           // -------------- FACULTY flow (unchanged) --------------
@@ -729,6 +824,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       onPressed: () => setStateDialog(() {
                         studentStage = 1;
                         otpInlineError = null;
+                        submitBannerError = null;
                       }),
                       child: const Text('Change email'),
                     ),
@@ -749,8 +845,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ElevatedButton(
                       onPressed: () async {
                         final ctx = context;
-                        final messenger = MyApp.scaffoldMessengerKey.currentState ??
-                            ScaffoldMessenger.of(ctx);
+                        final messenger = rootMessenger ?? ScaffoldMessenger.of(ctx);
                         final navigator = Navigator.of(ctx);
                         final password = passwordController.text;
                         final fullName = fullNameController.text.trim();
@@ -771,31 +866,28 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           otpRef = pendingOtpRef;
                         }
                         if (username.isEmpty || password.isEmpty) {
-                          // For student: if email controller was ever empty, Stage1 would never send;
-                          // defensively fall back to asking user via inline or snack.
                           if (role == 'student' && username.isEmpty) {
                             setStateDialog(() {
                               studentStage = 1;
-                              emailInlineError =
+                              submitBannerError =
                                   'Enter your Gmail first, then tap "Send verification code".';
+                              emailInlineError = 'Enter a valid Gmail address.';
                             });
                           } else {
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  role == 'student'
-                                      ? 'Enter email and password'
-                                      : 'Enter username and password',
-                                ),
-                              ),
-                            );
+                            setStateDialog(() {
+                              submitBannerError = role == 'student'
+                                  ? 'Enter your account password (and scroll down if you cannot see it).'
+                                  : 'Enter username and password.';
+                            });
                           }
+                          scrollToPassword();
                           return;
                         }
                         if (role == 'student') {
                           if (otp == null || otp.length != 6) {
                             setStateDialog(() {
                               otpInlineError = 'Enter the 6-digit code we sent to your Gmail.';
+                              submitBannerError = 'Enter the 6-digit verification code above.';
                             });
                             return;
                           }
@@ -803,6 +895,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             setStateDialog(() {
                               otpInlineError =
                                   'You must tap "Send verification code" first to prove email ownership.';
+                              submitBannerError =
+                                  'Go back to Step 1 (tap "Change email") and tap Send verification code first.';
                             });
                             return;
                           }
@@ -811,24 +905,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               selectedCourse == null ||
                               selectedYear == null ||
                               selectedSection == null) {
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                  content:
-                                      Text('Enter full name, student ID, course, year, and section')),
-                            );
+                            setStateDialog(() {
+                              submitBannerError =
+                                  'Fill every field below: Full name, Student ID, Course, Year Level, Section.';
+                            });
+                            scrollToPassword();
                             return;
                           }
                         }
                         if (!_isStrongPassword(password)) {
-                          messenger.showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                r'Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one digit, and one special character (!@#$%^&*)',
-                              ),
-                            ),
-                          );
+                          setStateDialog(() {
+                            submitBannerError =
+                                r'Password must be 8+ chars: 1 uppercase, 1 lowercase, 1 digit, 1 special char (!@#$%^&*).';
+                          });
+                          scrollToPassword();
                           return;
                         }
+                        setStateDialog(() => submitBannerError = null);
                         final result = await notifier.register(
                           username,
                           password,
@@ -851,8 +944,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 lower.contains('expired') ||
                                 lower.contains('pending')) {
                               otpInlineError = err;
+                              submitBannerError =
+                                  'Fix the verification code above (it may be wrong or expired).';
                             } else {
                               otpInlineError = null;
+                              submitBannerError = err;
+                              messenger.clearSnackBars();
                               messenger.showSnackBar(SnackBar(content: Text(err)));
                             }
                           });
@@ -861,6 +958,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         sendCooldownTimer?.cancel();
                         if (result.succeeded) {
                           navigator.pop();
+                          messenger.clearSnackBars();
                           messenger.showSnackBar(
                             const SnackBar(
                                 content:
@@ -869,8 +967,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           return;
                         }
                         if (result.isEmailVerificationRequired) {
-                          // Student should not reach here (OTP verified pre-register);
-                          // This branch is for future faculty pending-email flow.
                           final closed = await _showOtpDialog(
                             ctx,
                             username: result.username ?? username,
@@ -880,6 +976,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           );
                           if (!ctx.mounted) return;
                           navigator.pop();
+                          messenger.clearSnackBars();
                           messenger.showSnackBar(
                             SnackBar(
                               content: Text(
@@ -893,6 +990,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         }
                         // Faculty / other pending flow.
                         navigator.pop();
+                        messenger.clearSnackBars();
                         messenger.showSnackBar(
                           const SnackBar(
                               content:
