@@ -34,15 +34,18 @@ const MONGODB_URI = (process.env.MONGODB_URI_DIRECT || process.env.MONGODB_URI |
 const MONGODB_DB_NAME = (process.env.MONGODB_DB_NAME || 'attendify').trim();
 const GMAIL_USER = (process.env.GMAIL_USER || '').trim();
 const GMAIL_APP_PASSWORD = (process.env.GMAIL_APP_PASSWORD || '').trim();
+const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim();
+const BREVO_SENDER_NAME = (process.env.BREVO_SENDER_NAME || formatAppName()).trim();
+const BREVO_SENDER_EMAIL = (process.env.BREVO_SENDER_EMAIL || GMAIL_USER || '').trim();
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resends
 
 // ----- Nodemailer (Gmail) transport -----
+// NOTE: SMTP (both ports 465 and 587) is completely blocked on Render Free Tier egress.
+// Gmail SMTP transporter is initialized here for non-Render environments only.
 let mailTransporter = null;
 try {
   if (GMAIL_USER && GMAIL_APP_PASSWORD) {
-    // Use port 587 with STARTTLS instead of port 465.
-    // Render Free Tier egress often blocks 465 (implicit TLS) but allows 587.
     mailTransporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,
@@ -52,7 +55,6 @@ try {
         user: GMAIL_USER,
         pass: GMAIL_APP_PASSWORD,
       },
-      // Protect against "hang forever" behavior on blocked / misconfigured SMTP.
       connectionTimeout: 12000,
       greetingTimeout: 10000,
       socketTimeout: 15000,
@@ -72,11 +74,17 @@ try {
 }
 
 const SMTP_SEND_TIMEOUT_MS = 15000;
+const HTTP_SEND_TIMEOUT_MS = 15000;
+const BREVO_API_BASE = 'https://api.brevo.com/v3';
 
-const formatAppName = () => 'School Event Manager';
+// HTTPS API fallback for Brevo (https://www.brevo.com/) — works over port 443,
+// which is never blocked by Render Free Tier egress.
+// Free Tier: 300 emails / day. No credit card required.
+const sendViaBrevoApi = async ({ toEmail, otp, username }) => {
+  if (!BREVO_API_KEY) return { ok: false, reason: 'brevo-api-key-missing' };
+  const senderEmail = BREVO_SENDER_EMAIL || GMAIL_USER;
+  if (!senderEmail) return { ok: false, reason: 'no-sender-email' };
 
-const sendEmailCode = async ({ toEmail, otp, username }) => {
-  if (!toEmail) return { ok: false, reason: 'no-recipient' };
   const subject = `Your ${formatAppName()} verification code is ${otp}`;
   const text = [
     `Hi ${username || 'there'},`,
@@ -102,17 +110,115 @@ const sendEmailCode = async ({ toEmail, otp, username }) => {
       <p style="font-size: 14px; color: #888;">If you did not create an account, you can safely ignore this email.</p>
     </div>`;
 
-  // Always log the OTP so testing works even without Gmail configured.
+  const payload = {
+    sender: { name: BREVO_SENDER_NAME || formatAppName(), email: senderEmail },
+    to: [{ email: toEmail, name: username || toEmail }],
+    subject,
+    textContent: text,
+    htmlContent: html,
+  };
+
+  let cancel;
+  const timeoutPromise = new Promise((resolve) => {
+    cancel = setTimeout(() => resolve({ __timedOut: true }), HTTP_SEND_TIMEOUT_MS);
+  });
+
+  let respJson;
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const fetchPromise = globalThis.fetch(`${BREVO_API_BASE}/smtp/email`, {
+      method: 'POST',
+      headers: {
+        'api-key': BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller?.signal,
+    }).then(async (r) => {
+      const body = await r.text();
+      let parsed;
+      try { parsed = JSON.parse(body); } catch { parsed = { raw: body }; }
+      return { status: r.status, ok: r.ok, body: parsed, raw: body };
+    });
+    const raced = await Promise.race([fetchPromise, timeoutPromise]);
+    if (cancel) clearTimeout(cancel);
+    if (raced && raced.__timedOut) {
+      if (controller) controller.abort();
+      return { ok: false, reason: 'brevo-http-timeout', error: `Brevo API timed out after ${HTTP_SEND_TIMEOUT_MS}ms` };
+    }
+    respJson = raced;
+    if (!respJson.ok) {
+      console.error('[mail][brevo] Non-2xx:', respJson.status, respJson.raw || respJson.body);
+      return {
+        ok: false,
+        reason: `brevo-http-${respJson.status}`,
+        error: `Brevo API HTTP ${respJson.status}: ${JSON.stringify(respJson.body || respJson.raw)}`,
+      };
+    }
+    console.log(`[mail][brevo] Send OK: messageId=${respJson.body?.messageId || JSON.stringify(respJson.body)}`);
+    return { ok: true, info: respJson.body };
+  } catch (err) {
+    if (cancel) clearTimeout(cancel);
+    console.error('[mail][brevo] Fetch error:', err?.message || err);
+    return { ok: false, reason: 'brevo-http-exception', error: String(err?.message || err) };
+  }
+};
+
+const formatAppName = () => 'School Event Manager';
+
+const sendEmailCode = async ({ toEmail, otp, username }) => {
+  if (!toEmail) return { ok: false, reason: 'no-recipient' };
+
+  // Always log the OTP so testing works even without any email transport configured.
   console.log(`[mail][code] Email=${toEmail} Username=${username} OTP=${otp}`);
 
+  // Strategy: Brevo HTTPS API (port 443 — guaranteed on Render Free) FIRST,
+  // then Gmail SMTP fallback (works on non-Render hosts where egress isn't firewalled).
+  const subject = `Your ${formatAppName()} verification code is ${otp}`;
+
+  // 1. Try Brevo (pure HTTPS 443) first
+  if (BREVO_API_KEY) {
+    try {
+      const brevoResult = await sendViaBrevoApi({ toEmail, otp, username });
+      if (brevoResult.ok) return brevoResult;
+      console.warn('[mail] Brevo transport failed, falling back to Gmail SMTP if available:', brevoResult.error || brevoResult.reason);
+    } catch (err) {
+      console.warn('[mail] Brevo transport exception, falling back to Gmail SMTP if available:', err?.message || err);
+    }
+  }
+
+  // 2. Fallback: Gmail SMTP (ports 465/587) — blocked on Render Free but works elsewhere.
   if (!mailTransporter) {
     return { ok: false, reason: 'gmail-not-configured', otp };
   }
 
-  // Race nodemailer.sendMail against a hard 15-second timeout so the API
-  // response NEVER hangs 90s just because SMTP is blocked.
   let sendPromise;
   try {
+    const text = [
+      `Hi ${username || 'there'},`,
+      '',
+      `Welcome to ${formatAppName()}!`,
+      '',
+      `Your 6-digit verification code is: ${otp}`,
+      `This code will expire in 10 minutes.`,
+      '',
+      `If you did not create an account, you can safely ignore this email.`,
+      '',
+      `— The ${formatAppName()} Team`,
+    ].join('\n');
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
+      <h2 style="margin: 0 0 16px; color: #4F46E5;">${formatAppName()}</h2>
+      <p style="font-size: 15px;">Hi ${username || 'there'},</p>
+      <p style="font-size: 15px;">Welcome! Use the verification code below to activate your account:</p>
+      <div style="text-align:center; margin: 24px 0;">
+        <div style="display:inline-block; font-size: 32px; letter-spacing: 12px; padding: 14px 28px; border-radius: 10px; background: #EEF2FF; color: #4338CA; font-weight: 700;">${otp}</div>
+      </div>
+      <p style="font-size: 14px; color: #555;">This code will expire in 10 minutes.</p>
+      <p style="font-size: 14px; color: #888;">If you did not create an account, you can safely ignore this email.</p>
+    </div>`;
+
     sendPromise = mailTransporter.sendMail({
       from: `${formatAppName()} <${GMAIL_USER}>`,
       to: toEmail,
@@ -136,7 +242,7 @@ const sendEmailCode = async ({ toEmail, otp, username }) => {
     const result = await Promise.race([sendPromise, timeoutPromise]);
     if (timeoutRef) clearTimeout(timeoutRef);
     if (result && result.__timedOut) {
-      const msg = `smtp-timeout-after-${SMTP_SEND_TIMEOUT_MS}ms (Render egress may block Gmail SMTP)`;
+      const msg = `smtp-timeout-after-${SMTP_SEND_TIMEOUT_MS}ms (Render egress may block Gmail SMTP — set BREVO_API_KEY env to use HTTPS 443 Brevo API)`;
       console.error(`[mail] Send timed out: ${msg}`);
       return { ok: false, reason: 'send-timeout', error: msg, otp };
     }
@@ -1476,7 +1582,18 @@ const start = async () => {
     console.log(`🚀  Server running at http://localhost:${PORT}`);
     console.log(`🔗  Public endpoint: https://school-event-managements.onrender.com`);
     console.log(`💾  Data layer:      ${mongoDb ? `MongoDB ("${MONGODB_DB_NAME}") ✅ PERSISTENT` : 'JSON files (not persistent on Render ⚠️)'}`);
-    console.log(`📧  Gmail SMTP:      ${(GMAIL_USER && GMAIL_APP_PASSWORD) ? `Configured (from=${GMAIL_USER}) ✅` : 'Not configured — OTPs logged ONLY to server console ⚠️'}`);
+    const activeTransports = [];
+    if (BREVO_API_KEY) {
+      const sender = BREVO_SENDER_EMAIL || GMAIL_USER || 'NOT_SET';
+      activeTransports.push(`Brevo HTTPS API (sender=${sender}) ✅ — works on Render Free`);
+    }
+    if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+      activeTransports.push(`Gmail SMTP 587 STARTTLS (from=${GMAIL_USER}) — needs egress (not Render Free)`);
+    }
+    if (activeTransports.length === 0) {
+      activeTransports.push('None configured. OTPs logged ONLY to server console ⚠️');
+    }
+    console.log(`📧  Email delivery:  ${activeTransports.join('  |  ')}`);
     console.log(`🔐  JWT secret:      ${JWT_SECRET === 'school-event-secret-key-change-in-prod' ? '⚠️  USING DEFAULT (override JWT_SECRET env var!)' : 'Set via env var ✅'}`);
     console.log('═══════════════════════════════════════════════════════════════');
     console.log('');
