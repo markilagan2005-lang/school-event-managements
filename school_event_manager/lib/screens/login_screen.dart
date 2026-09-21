@@ -137,13 +137,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   final ctx = context;
                                   final messenger = MyApp.scaffoldMessengerKey.currentState ??
                                       ScaffoldMessenger.of(ctx);
-                                  final result = await authNotifier.login(
-                                    _usernameController.text,
-                                    _passwordController.text,
-                                  );
+                                  Future<AuthActionResult> doLogin() => authNotifier.login(
+                                        _usernameController.text,
+                                        _passwordController.text,
+                                      );
+                                  AuthActionResult result = await doLogin();
                                   if (!ctx.mounted) return;
                                   if (result.succeeded) return;
                                   if (result.isEmailVerificationRequired) {
+                                    // Try OTP verification. If user successfully verifies,
+                                    // AUTO-RE-ATTEMPT login immediately so they don't have to
+                                    // click Login again.
                                     final closed = await _showOtpDialog(
                                       ctx,
                                       username: result.username ?? _usernameController.text.trim(),
@@ -151,14 +155,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       expiresInMs: result.expiresInMs,
                                       emailSent: result.emailSent ?? false,
                                     );
+                                    if (!ctx.mounted) return;
                                     if (closed == true) {
                                       messenger.showSnackBar(
                                         const SnackBar(
                                           content: Text(
-                                            'Email verified! You can now log in.',
+                                            'Email verified! Signing you in…',
                                           ),
                                         ),
                                       );
+                                      final retry = await doLogin();
+                                      if (!ctx.mounted) return;
+                                      if (retry.succeeded) return;
+                                      if (retry.errorMessage != null) {
+                                        messenger.showSnackBar(
+                                          SnackBar(content: Text(retry.errorMessage!)),
+                                        );
+                                      }
                                     }
                                     return;
                                   }
@@ -178,10 +191,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   final ctx = context;
                                   final messenger = MyApp.scaffoldMessengerKey.currentState ??
                                       ScaffoldMessenger.of(ctx);
-                                  final result = await authNotifier.login(
-                                    _usernameController.text,
-                                    _passwordController.text,
-                                  );
+                                  Future<AuthActionResult> doLogin() => authNotifier.login(
+                                        _usernameController.text,
+                                        _passwordController.text,
+                                      );
+                                  AuthActionResult result = await doLogin();
                                   if (!ctx.mounted) return;
                                   if (result.succeeded) return;
                                   if (result.isEmailVerificationRequired) {
@@ -192,14 +206,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       expiresInMs: result.expiresInMs,
                                       emailSent: result.emailSent ?? false,
                                     );
+                                    if (!ctx.mounted) return;
                                     if (closed == true) {
                                       messenger.showSnackBar(
                                         const SnackBar(
                                           content: Text(
-                                            'Email verified! You can now log in.',
+                                            'Email verified! Signing you in…',
                                           ),
                                         ),
                                       );
+                                      final retry = await doLogin();
+                                      if (!ctx.mounted) return;
+                                      if (retry.succeeded) return;
+                                      if (retry.errorMessage != null) {
+                                        messenger.showSnackBar(
+                                          SnackBar(content: Text(retry.errorMessage!)),
+                                        );
+                                      }
                                     }
                                     return;
                                   }
@@ -733,7 +756,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         final fullName = fullNameController.text.trim();
                         final studentId = studentIdController.text.trim();
                         final email = role == 'student'
-                            ? (pendingOtpEmail ?? emailController.text.trim()).toLowerCase()
+                            ? ((pendingOtpEmail?.isNotEmpty == true
+                                        ? pendingOtpEmail
+                                        : emailController.text.trim()) ??
+                                    emailController.text.trim())
+                                .toLowerCase()
                             : emailController.text.trim();
                         String username = usernameController.text.trim();
                         String? otp;
@@ -744,15 +771,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           otpRef = pendingOtpRef;
                         }
                         if (username.isEmpty || password.isEmpty) {
-                          messenger.showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                role == 'student'
-                                    ? 'Enter email and password'
-                                    : 'Enter username and password',
+                          // For student: if email controller was ever empty, Stage1 would never send;
+                          // defensively fall back to asking user via inline or snack.
+                          if (role == 'student' && username.isEmpty) {
+                            setStateDialog(() {
+                              studentStage = 1;
+                              emailInlineError =
+                                  'Enter your Gmail first, then tap "Send verification code".';
+                            });
+                          } else {
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  role == 'student'
+                                      ? 'Enter email and password'
+                                      : 'Enter username and password',
+                                ),
                               ),
-                            ),
-                          );
+                            );
+                          }
                           return;
                         }
                         if (role == 'student') {
@@ -808,7 +845,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         final err = result.errorMessage;
                         if (err != null) {
                           setStateDialog(() {
-                            // If server rejected the OTP code specifically, move the error inline.
                             final lower = err.toLowerCase();
                             if (lower.contains('code') ||
                                 lower.contains('otp') ||
@@ -832,12 +868,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           );
                           return;
                         }
+                        if (result.isEmailVerificationRequired) {
+                          // Student should not reach here (OTP verified pre-register);
+                          // This branch is for future faculty pending-email flow.
+                          final closed = await _showOtpDialog(
+                            ctx,
+                            username: result.username ?? username,
+                            email: result.email ?? email,
+                            expiresInMs: result.expiresInMs,
+                            emailSent: result.emailSent ?? false,
+                          );
+                          if (!ctx.mounted) return;
+                          navigator.pop();
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                closed == true
+                                    ? 'Email verified. You can now log in.'
+                                    : 'Account submitted. Verify your email first before logging in.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
                         // Faculty / other pending flow.
                         navigator.pop();
-                        final alt = result.succeeded
-                            ? 'Account created and verified.'
-                            : 'Account submitted. Wait for admin approval before logging in.';
-                        messenger.showSnackBar(SnackBar(content: Text(alt)));
+                        messenger.showSnackBar(
+                          const SnackBar(
+                              content:
+                                  Text('Account submitted. Wait for admin approval before logging in.')),
+                        );
                       },
                       child: const Text('Register'),
                     ),
