@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
 import '../providers/auth_provider.dart';
 import '../services/event_provider.dart';
@@ -33,6 +34,118 @@ class HomeScreen extends ConsumerWidget {
       return FacultyHomeScreen(user: user);
     }
     return StudentHomeScreen(user: user);
+  }
+}
+
+Future<void> _openStandaloneScanner(BuildContext context, User user) {
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => _StandaloneQrScannerScreen(user: user),
+    ),
+  );
+}
+
+class _AppDrawer extends StatelessWidget {
+  const _AppDrawer({required this.user, required this.ref});
+
+  final User user;
+  final WidgetRef ref;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final initials = (user.fullName.isNotEmpty ? user.fullName : user.username)
+        .split(RegExp(r'\s+'))
+        .map((s) => s.isEmpty ? '' : s[0].toUpperCase())
+        .take(2)
+        .join();
+    return Drawer(
+      width: 280,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                      child: Text(initials.isEmpty ? 'U' : initials, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.fullName.isEmpty ? user.username : user.fullName,
+                            style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            '${user.role.toUpperCase()} • ${user.username}',
+                            style: textTheme.bodySmall?.copyWith(color: Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 8),
+              if (user.role == 'student') ...[
+                ListTile(
+                  leading: const Icon(Icons.qr_code_scanner_outlined),
+                  title: const Text('Scan QR', style: TextStyle(fontWeight: FontWeight.w700)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _openStandaloneScanner(context, user);
+                  },
+                ),
+              ],
+              ListTile(
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w700)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openSettingsSheet(context, ref, user);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.menu_book_outlined),
+                title: const Text('Instructions'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showInstructionsDialog(context, user);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('About Us'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAboutUsDialog(context);
+                },
+              ),
+              const Spacer(),
+              const Divider(height: 8),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Color(0xFFB3261E)),
+                title: const Text('Logout', style: TextStyle(color: Color(0xFFB3261E), fontWeight: FontWeight.w700)),
+                onTap: () {
+                  Navigator.pop(context);
+                  ref.read(authProvider.notifier).logout();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -101,10 +214,11 @@ void _showInstructionsDialog(BuildContext context, User user) {
           '2. In Attendance, monitor your handled records.\n'
           '3. During scanning, select faculty correctly for check-in/check-out.',
     _ =>
-      '1. Open Scan QR tab.\n'
-          '2. Scan event QR when instructor allows.\n'
-          '3. Select faculty for check-in/check-out.\n'
-          '4. Review logs in My Attendance tab.',
+      '1. Open Events tab to view event posters & details.\n'
+          '2. Tap an event, then scroll to "Scan QR for Attendance" section.\n'
+          '3. Quick access: open drawer (top-left ☰) → Scan QR anytime.\n'
+          '4. Select faculty for check-in/check-out during scan.\n'
+          '5. Review logs in My Attendance tab.',
   };
 
   showDialog<void>(
@@ -279,6 +393,7 @@ class AdminHomeScreen extends ConsumerWidget {
     return DefaultTabController(
       length: 4,
       child: Scaffold(
+        drawer: _AppDrawer(user: user, ref: ref),
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -293,16 +408,8 @@ class AdminHomeScreen extends ConsumerWidget {
           backgroundColor: Theme.of(context).colorScheme.primary,
           foregroundColor: Colors.white,
           surfaceTintColor: Theme.of(context).colorScheme.primary,
-          actions: [
-            IconButton(
-              onPressed: () => _openSettingsSheet(context, ref, user),
-              icon: const Icon(Icons.settings),
-              style: IconButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: Colors.white24,
-              ),
-            ),
-            const SizedBox(width: 8),
+          actions: const [
+            SizedBox(width: 8),
           ],
           bottom: const TabBar(
             indicatorColor: Colors.white,
@@ -339,8 +446,9 @@ class StudentHomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
+        drawer: _AppDrawer(user: user, ref: ref),
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -355,22 +463,15 @@ class StudentHomeScreen extends ConsumerWidget {
           backgroundColor: Theme.of(context).colorScheme.primary,
           foregroundColor: Colors.white,
           surfaceTintColor: Theme.of(context).colorScheme.primary,
-          actions: [
-            IconButton(
-              onPressed: () => _openSettingsSheet(context, ref, user),
-              icon: const Icon(Icons.settings),
-              style: IconButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: Colors.white24,
-              ),
-            ),
-            const SizedBox(width: 8),
+          actions: const [
+            SizedBox(width: 8),
           ],
           bottom: const TabBar(
             indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
             tabs: [
+              Tab(icon: Icon(Icons.event_available_outlined), text: 'Events'),
               Tab(icon: Icon(Icons.qr_code_scanner), text: 'Scan QR'),
               Tab(icon: Icon(Icons.history), text: 'My Attendance'),
             ],
@@ -379,6 +480,7 @@ class StudentHomeScreen extends ConsumerWidget {
         body: _TabBackground(
           child: TabBarView(
             children: [
+              StudentEventsTab(user: user),
               StudentScannerTab(user: user),
               StudentAttendanceTab(user: user),
             ],
@@ -399,6 +501,7 @@ class FacultyHomeScreen extends ConsumerWidget {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
+        drawer: _AppDrawer(user: user, ref: ref),
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -413,16 +516,8 @@ class FacultyHomeScreen extends ConsumerWidget {
           backgroundColor: Theme.of(context).colorScheme.primary,
           foregroundColor: Colors.white,
           surfaceTintColor: Theme.of(context).colorScheme.primary,
-          actions: [
-            IconButton(
-              onPressed: () => _openSettingsSheet(context, ref, user),
-              icon: const Icon(Icons.settings),
-              style: IconButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: Colors.white24,
-              ),
-            ),
-            const SizedBox(width: 8),
+          actions: const [
+            SizedBox(width: 8),
           ],
           bottom: const TabBar(
             indicatorColor: Colors.white,
@@ -719,91 +814,191 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
 
   Future<void> _showAddEventDialog(BuildContext context) async {
     final nameController = TextEditingController();
+    final descriptionController = TextEditingController();
     DateTime date = DateTime.now();
     String status = 'open';
     bool enableWindow = false;
     TimeOfDay startTime = const TimeOfDay(hour: 8, minute: 0);
     TimeOfDay endTime = const TimeOfDay(hour: 17, minute: 0);
+    Uint8List? pickedBytes;
+    String posterDataUrl = '';
+    bool busyPicking = false;
+    final scrollController = ScrollController();
+    final imagePicker = ImagePicker();
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: const Text('Add Event'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Event name'),
-              ),
-              const SizedBox(height: 12),
-              Row(
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 520),
+            child: SingleChildScrollView(
+              controller: scrollController,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: Text('${date.toLocal()}'.split(' ')[0])),
-                  TextButton(
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: date,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime(2100),
-                      );
-                      if (picked != null) {
-                        setState(() => date = picked);
-                      }
-                    },
-                    child: const Text('Pick date'),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Event name',
+                      prefixIcon: Icon(Icons.event_available),
+                    ),
+                    textInputAction: TextInputAction.next,
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: status,
-                decoration: const InputDecoration(labelText: 'Status'),
-                items: const [
-                  DropdownMenuItem(value: 'open', child: Text('Open')),
-                  DropdownMenuItem(value: 'closed', child: Text('Closed')),
-                  DropdownMenuItem(value: 'draft', child: Text('Draft')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() => status = value);
-                },
-              ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Enable time window'),
-                value: enableWindow,
-                onChanged: (v) => setState(() => enableWindow = v),
-              ),
-              if (enableWindow) ...[
-                Row(
-                  children: [
-                    Expanded(child: Text('Start: ${startTime.format(context)}')),
-                    TextButton(
-                      onPressed: () async {
-                        final picked = await showTimePicker(context: context, initialTime: startTime);
-                        if (picked != null) setState(() => startTime = picked);
-                      },
-                      child: const Text('Pick'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: descriptionController,
+                    maxLines: 4,
+                    minLines: 2,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                      alignLabelWithHint: true,
+                      prefixIcon: Padding(
+                        padding: EdgeInsets.only(bottom: 48),
+                        child: Icon(Icons.notes),
+                      ),
+                      hintText: 'Write event details, venue, required attire, etc.',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (pickedBytes != null) ...[
+                    Stack(
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          height: 180,
+                          decoration: BoxDecoration(
+                            color: Colors.black12,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Image.memory(pickedBytes!, fit: BoxFit.cover),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: IconButton.filled(
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.black54,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                pickedBytes = null;
+                                posterDataUrl = '';
+                              });
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  OutlinedButton.icon(
+                    onPressed: busyPicking
+                        ? null
+                        : () async {
+                            setState(() => busyPicking = true);
+                            try {
+                              final picked = await imagePicker.pickImage(
+                                source: ImageSource.gallery,
+                                maxWidth: 1280,
+                                imageQuality: 82,
+                              );
+                              if (picked != null) {
+                                final bytes = await picked.readAsBytes();
+                                final mime = picked.mimeType ??
+                                    (picked.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+                                final b64 = base64Encode(bytes);
+                                setState(() {
+                                  pickedBytes = bytes;
+                                  posterDataUrl = 'data:$mime;base64,$b64';
+                                });
+                              }
+                            } finally {
+                              if (context.mounted) {
+                                setState(() => busyPicking = false);
+                              }
+                            }
+                          },
+                    icon: busyPicking
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.image_outlined),
+                    label: Text(pickedBytes == null ? 'Attach poster image' : 'Change poster image'),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(child: Text('${date.toLocal()}'.split(' ')[0])),
+                      TextButton(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: date,
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime(2100),
+                          );
+                          if (picked != null) {
+                            setState(() => date = picked);
+                          }
+                        },
+                        child: const Text('Pick date'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: status,
+                    decoration: const InputDecoration(labelText: 'Status'),
+                    items: const [
+                      DropdownMenuItem(value: 'open', child: Text('Open')),
+                      DropdownMenuItem(value: 'closed', child: Text('Closed')),
+                      DropdownMenuItem(value: 'draft', child: Text('Draft')),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => status = value);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable time window'),
+                    value: enableWindow,
+                    onChanged: (v) => setState(() => enableWindow = v),
+                  ),
+                  if (enableWindow) ...[
+                    Row(
+                      children: [
+                        Expanded(child: Text('Start: ${startTime.format(context)}')),
+                        TextButton(
+                          onPressed: () async {
+                            final picked = await showTimePicker(context: context, initialTime: startTime);
+                            if (picked != null) setState(() => startTime = picked);
+                          },
+                          child: const Text('Pick'),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        Expanded(child: Text('End: ${endTime.format(context)}')),
+                        TextButton(
+                          onPressed: () async {
+                            final picked = await showTimePicker(context: context, initialTime: endTime);
+                            if (picked != null) setState(() => endTime = picked);
+                          },
+                          child: const Text('Pick'),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-                Row(
-                  children: [
-                    Expanded(child: Text('End: ${endTime.format(context)}')),
-                    TextButton(
-                      onPressed: () async {
-                        final picked = await showTimePicker(context: context, initialTime: endTime);
-                        if (picked != null) setState(() => endTime = picked);
-                      },
-                      child: const Text('Pick'),
-                    ),
-                  ],
-                ),
-              ],
-            ],
+                ],
+              ),
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
@@ -833,6 +1028,8 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                       status: status,
                       startAt: startAt,
                       endAt: endAtDt,
+                      description: descriptionController.text.trim(),
+                      posterImageUrl: posterDataUrl,
                     );
                 if (!context.mounted) return;
                 Navigator.pop(context);
@@ -2288,6 +2485,593 @@ class StudentAttendanceTab extends ConsumerWidget {
                 ),
         );
       },
+    );
+  }
+}
+
+class StudentEventsTab extends ConsumerWidget {
+  const StudentEventsTab({super.key, required this.user});
+
+  final User user;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final eventsState = ref.watch(eventProvider);
+    return eventsState.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, st) => Center(child: Text('Error: $e')),
+      data: (events) {
+        final visible = events.where((e) => e.status != 'draft').toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+        return RefreshIndicator(
+          onRefresh: () => ref.read(eventProvider.notifier).loadEvents(),
+          child: visible.isEmpty
+              ? ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const SizedBox(height: 40),
+                    Center(
+                      child: Text(
+                        'No published events yet',
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  itemCount: visible.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final event = visible[index];
+                    return _EventListTile(event: event, onTap: () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (_) => _EventDetailScreen(event: event, user: user),
+                        ),
+                      );
+                    });
+                  },
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _EventListTile extends StatelessWidget {
+  const _EventListTile({required this.event, required this.onTap});
+  final Event event;
+  final VoidCallback onTap;
+
+  Uint8List? _decodePoster() {
+    final url = event.posterImageUrl;
+    if (url.isEmpty) return null;
+    final prefix = ';base64,';
+    final idx = url.indexOf(prefix);
+    if (idx < 0) return null;
+    try {
+      return base64Decode(url.substring(idx + prefix.length));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final posterBytes = _decodePoster();
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: 88,
+                  height: 88,
+                  color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.5),
+                  child: posterBytes != null
+                      ? Image.memory(posterBytes, fit: BoxFit.cover)
+                      : Icon(Icons.event_rounded,
+                          size: 38, color: Theme.of(context).colorScheme.onSecondaryContainer),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 2),
+                    Text(
+                      event.name,
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      [
+                        '${event.date.toLocal()}'.split(' ')[0],
+                        event.status.toUpperCase(),
+                        if (event.startAt != null && event.endAt != null)
+                          '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
+                      ].join(' • '),
+                      style: const TextStyle(color: Colors.black54, fontSize: 12),
+                    ),
+                    if (event.description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        event.description.trim(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.black54, fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, color: Colors.black38),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EventDetailScreen extends ConsumerStatefulWidget {
+  const _EventDetailScreen({required this.event, required this.user});
+  final Event event;
+  final User user;
+
+  @override
+  ConsumerState<_EventDetailScreen> createState() => _EventDetailScreenState();
+}
+
+class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
+  bool _showScanner = false;
+  bool _processing = false;
+  String _scanMessage = 'Scan the event QR to record your attendance.';
+  bool _pickingFaculty = false;
+  int _lastRefreshMs = 0;
+
+  Uint8List? _decodePoster() {
+    final url = widget.event.posterImageUrl;
+    if (url.isEmpty) return null;
+    final prefix = ';base64,';
+    final idx = url.indexOf(prefix);
+    if (idx < 0) return null;
+    try {
+      return base64Decode(url.substring(idx + prefix.length));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ImageProvider? _posterImage() {
+    final url = widget.event.posterImageUrl;
+    if (url.isEmpty) return null;
+    if (url.startsWith('data:')) {
+      final bytes = _decodePoster();
+      if (bytes == null) return null;
+      return MemoryImage(bytes);
+    }
+    return NetworkImage(url);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final poster = _posterImage();
+    final textTheme = Theme.of(context).textTheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.event.name),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Theme.of(context).colorScheme.primary,
+      ),
+      body: _TabBackground(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          children: [
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (poster != null)
+                    Ink.image(
+                      image: poster,
+                      fit: BoxFit.cover,
+                      height: 220,
+                      width: double.infinity,
+                    )
+                  else
+                    Container(
+                      width: double.infinity,
+                      height: 160,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.event_rounded,
+                              size: 56, color: Theme.of(context).colorScheme.onPrimaryContainer),
+                          const SizedBox(height: 6),
+                          Text(
+                            'No poster uploaded',
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.event.name,
+                          style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          [
+                            '${widget.event.date.toLocal()}'.split(' ')[0],
+                            widget.event.status.toUpperCase(),
+                            if (widget.event.startAt != null && widget.event.endAt != null)
+                              '${TimeOfDay.fromDateTime(widget.event.startAt!).format(context)}-${TimeOfDay.fromDateTime(widget.event.endAt!).format(context)}',
+                          ].join(' • '),
+                          style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 12),
+                        if (widget.event.description.trim().isEmpty)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF7F8FC),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              'No description yet.',
+                              style: textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                            ),
+                          )
+                        else
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF7F8FC),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              widget.event.description.trim(),
+                              style: textTheme.bodyMedium?.copyWith(height: 1.4),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.22),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.qr_code_2_outlined, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Scan QR for Attendance',
+                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            _showScanner ? Icons.sync : Icons.qr_code_scanner,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            _scanMessage,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _showScanner
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _scanMessage = 'Refreshing events...';
+                                    _processing = true;
+                                  });
+                                  try {
+                                    await ref.read(eventProvider.notifier).loadEvents();
+                                    if (mounted) {
+                                      setState(() {
+                                        _scanMessage = 'Scan the event QR to record your attendance.';
+                                      });
+                                    }
+                                  } catch (e) {
+                                    if (mounted) {
+                                      setState(() {
+                                        _scanMessage = 'Refresh failed: $e';
+                                      });
+                                    }
+                                  } finally {
+                                    if (mounted) setState(() => _processing = false);
+                                  }
+                                },
+                          icon: const Icon(Icons.refresh),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (!_showScanner)
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () => setState(() => _showScanner = true),
+                          icon: const Icon(Icons.qr_code_scanner),
+                          label: const Text('Open Scanner'),
+                        ),
+                      )
+                    else ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFFE6E8F0)),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: SizedBox(
+                            height: 300,
+                            child: Consumer(
+                              builder: (context, cRef, _) {
+                                final eventsState = cRef.watch(eventProvider);
+                                final all = eventsState.valueOrNull ?? <Event>[];
+                                return MobileScanner(
+                                  onDetect: (capture) => _onDetect(capture, all),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => setState(() {
+                            _showScanner = false;
+                            _scanMessage = 'Scan the event QR to record your attendance.';
+                          }),
+                          icon: const Icon(Icons.close),
+                          label: const Text('Close Scanner'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onDetect(BarcodeCapture capture, List<Event> events) async {
+    if (_processing) return;
+    final barcode = capture.barcodes.isEmpty ? null : capture.barcodes.first;
+    final raw = barcode?.rawValue;
+    if (raw == null || raw.isEmpty) return;
+
+    setState(() {
+      _processing = true;
+      _scanMessage = 'Processing...';
+    });
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) throw Exception('Invalid QR data');
+      final eventId = decoded['eventId']?.toString();
+      if (eventId == null) throw Exception('Invalid QR data');
+
+      Event? event = events.where((e) => e.id == eventId).cast<Event?>().firstWhere((e) => e != null, orElse: () => null);
+      if (event == null) {
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        if (nowMs - _lastRefreshMs > 3000) {
+          _lastRefreshMs = nowMs;
+          await ref.read(eventProvider.notifier).loadEvents();
+          final refreshed = ref.read(eventProvider).value;
+          if (refreshed != null) {
+            event = refreshed.where((e) => e.id == eventId).cast<Event?>().firstWhere((e) => e != null, orElse: () => null);
+          }
+        }
+      }
+
+      if (eventId != widget.event.id) {
+        setState(() {
+          _scanMessage = 'QR does not match this event. Scan the QR for: ${widget.event.name}';
+        });
+        return;
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+      if (token == null) {
+        setState(() {
+          _scanMessage = 'Offline mode: connect to the server and login again to scan this QR.';
+        });
+        return;
+      }
+
+      final eventName = event?.name.isNotEmpty == true ? event!.name : widget.event.name;
+      final studentId = widget.user.studentId.isNotEmpty ? widget.user.studentId : widget.user.username;
+      final studentName = widget.user.fullName.isNotEmpty ? widget.user.fullName : widget.user.username;
+
+      if (_pickingFaculty) return;
+      _pickingFaculty = true;
+      if (!mounted) return;
+      final pickedFacultyId = await _pickFacultyForThisScan(context, eventId, studentId);
+      _pickingFaculty = false;
+      if (pickedFacultyId == null) {
+        setState(() {
+          _scanMessage = 'Select a faculty to continue.';
+        });
+        return;
+      }
+
+      final msg = await ref.read(attendanceProvider.notifier).markAttendance(
+            eventId,
+            eventName,
+            studentId,
+            studentName,
+            widget.user.id,
+            facultyId: pickedFacultyId,
+          );
+
+      setState(() {
+        _scanMessage = msg;
+      });
+    } catch (e) {
+      setState(() {
+        _scanMessage = 'Scan error: $e';
+      });
+    } finally {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (mounted) {
+        setState(() => _processing = false);
+      }
+    }
+  }
+
+  Future<String?> _pickFacultyForThisScan(BuildContext ctx, String eventId, String studentId) async {
+    final attendanceNotifier = ref.read(attendanceProvider.notifier);
+    await attendanceNotifier.loadAttendance();
+    final list = ref.read(attendanceProvider).value ?? const <AttendanceRecord>[];
+    final now = DateTime.now();
+    final open = list.where((r) {
+      if (r.eventId != eventId) return false;
+      if (r.studentId != studentId) return false;
+      if (r.checkOutAt != null) return false;
+      final checkIn = r.checkInAt ?? r.timestamp;
+      return checkIn.year == now.year && checkIn.month == now.month && checkIn.day == now.day;
+    }).cast<AttendanceRecord?>().firstWhere((r) => r != null, orElse: () => null);
+    final stage = open == null ? 'Check-in' : 'Check-out';
+
+    final rawFaculty = await ApiService.getFaculty();
+    final faculty = rawFaculty.map((u) => User.fromJson(u)).toList();
+    if (faculty.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _scanMessage = 'No faculty accounts found. Ask admin to create faculty accounts.';
+        });
+      }
+      return null;
+    }
+
+    String selectedId = faculty.first.id;
+    if (!ctx.mounted) return null;
+    final picked = await showDialog<String>(
+      context: ctx,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Choose faculty for $stage'),
+          content: DropdownButtonFormField<String>(
+            initialValue: selectedId,
+            items: faculty
+                .map(
+                  (f) => DropdownMenuItem(
+                    value: f.id,
+                    child: Text(f.fullName.isEmpty ? f.username : f.fullName),
+                  ),
+                )
+                .toList(),
+            onChanged: (v) {
+              if (v == null) return;
+              setState(() => selectedId = v);
+            },
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(context, selectedId), child: const Text('Continue')),
+          ],
+        ),
+      ),
+    );
+    return picked;
+  }
+}
+
+class _StandaloneQrScannerScreen extends ConsumerStatefulWidget {
+  const _StandaloneQrScannerScreen({required this.user});
+  final User user;
+
+  @override
+  ConsumerState<_StandaloneQrScannerScreen> createState() => _StandaloneQrScannerScreenState();
+}
+
+class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScannerScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scan QR'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Theme.of(context).colorScheme.primary,
+      ),
+      body: _TabBackground(
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            child: StudentScannerTab(user: widget.user),
+          ),
+        ),
+      ),
     );
   }
 }

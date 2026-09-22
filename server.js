@@ -1068,8 +1068,11 @@ app.get('/api/events', authenticateToken, (req, res) => {
 
 app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
   const events = loadData(eventsFile);
-  const { name, date, status, startAt, endAt } = req.body;
+  const { name, date, status, startAt, endAt, description, posterImageUrl } = req.body;
   if (!name || !date) return res.status(400).json({ error: 'Invalid payload' });
+  const cleanPoster = typeof posterImageUrl === 'string' && posterImageUrl.trim().length < 2_000_000
+    ? posterImageUrl.trim()
+    : '';
   const event = {
     id: uuidv4(),
     name,
@@ -1077,6 +1080,8 @@ app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
     status: ['draft', 'open', 'closed'].includes(status) ? status : 'open',
     startAt: startAt || null,
     endAt: endAt || null,
+    description: typeof description === 'string' ? description.trim() : '',
+    posterImageUrl: cleanPoster,
     attendees: []
   };
   events.push(event);
@@ -1088,12 +1093,16 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
   const events = loadData(eventsFile);
   const idx = events.findIndex(e => e.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Event not found' });
-  const { name, date, status, startAt, endAt } = req.body;
+  const { name, date, status, startAt, endAt, description, posterImageUrl } = req.body;
   if (name != null) events[idx].name = name;
   if (date != null) events[idx].date = date;
   if (status != null && ['draft', 'open', 'closed'].includes(status)) events[idx].status = status;
   events[idx].startAt = startAt || null;
   events[idx].endAt = endAt || null;
+  if (typeof description === 'string') events[idx].description = description.trim();
+  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length < 2_000_000) {
+    events[idx].posterImageUrl = posterImageUrl.trim();
+  }
   saveData(eventsFile, events);
   res.json(events[idx]);
 });

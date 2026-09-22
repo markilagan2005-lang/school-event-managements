@@ -7,6 +7,8 @@ class Event {
   final String status; // draft | open | closed
   final DateTime? startAt;
   final DateTime? endAt;
+  final String description;
+  final String posterImageUrl;
   List<Attendee> attendees;
 
   Event({
@@ -16,6 +18,8 @@ class Event {
     this.status = 'open',
     this.startAt,
     this.endAt,
+    this.description = '',
+    this.posterImageUrl = '',
     this.attendees = const [],
   });
 
@@ -26,6 +30,8 @@ class Event {
     'status': status,
     'startAt': startAt?.toIso8601String(),
     'endAt': endAt?.toIso8601String(),
+    'description': description,
+    'posterImageUrl': posterImageUrl,
     'attendees': attendees.map((a) => a.toJson()).toList(),
   };
 
@@ -45,6 +51,8 @@ class Event {
     status: json['status'] ?? 'open',
     startAt: _parse(json['startAt']),
     endAt: _parse(json['endAt']),
+    description: json['description']?.toString() ?? '',
+    posterImageUrl: json['posterImageUrl']?.toString() ?? '',
     attendees: (json['attendees'] as List<dynamic>?)
         ?.map((a) => Attendee.fromJson(a as Map<String, dynamic>))
         .toList() ?? [],

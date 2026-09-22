@@ -159,6 +159,8 @@ class ApiService {
         status: e['status'] ?? 'open',
         startAt: _parseDateTime(e['startAt']),
         endAt: _parseDateTime(e['endAt']),
+        description: e['description']?.toString() ?? '',
+        posterImageUrl: e['posterImageUrl']?.toString() ?? '',
         attendees: attendees,
       );
     }).toList();
@@ -170,6 +172,8 @@ class ApiService {
     DateTime? startAt,
     DateTime? endAt,
     String status = 'open',
+    String description = '',
+    String posterImageUrl = '',
   }) async {
     final c = await _client();
     final prefs = await SharedPreferences.getInstance();
@@ -182,6 +186,8 @@ class ApiService {
         'status': status,
         if (startAt != null) 'startAt': _toServerIso(startAt),
         if (endAt != null) 'endAt': _toServerIso(endAt),
+        'description': description,
+        'posterImageUrl': posterImageUrl,
       },
       token: token,
     );
@@ -192,6 +198,8 @@ class ApiService {
       status: res['status'] ?? status,
       startAt: _parseDateTime(res['startAt']) ?? startAt,
       endAt: _parseDateTime(res['endAt']) ?? endAt,
+      description: res['description']?.toString() ?? description,
+      posterImageUrl: res['posterImageUrl']?.toString() ?? posterImageUrl,
       attendees: const [],
     );
   }
@@ -203,6 +211,8 @@ class ApiService {
     String? status,
     DateTime? startAt,
     DateTime? endAt,
+    String? description,
+    String? posterImageUrl,
   }) async {
     final c = await _client();
     final prefs = await SharedPreferences.getInstance();
@@ -215,6 +225,8 @@ class ApiService {
         if (status != null) 'status': status,
         'startAt': startAt == null ? null : _toServerIso(startAt),
         'endAt': endAt == null ? null : _toServerIso(endAt),
+        if (description != null) 'description': description,
+        if (posterImageUrl != null) 'posterImageUrl': posterImageUrl,
       },
       token: token,
     );

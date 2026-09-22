@@ -33,6 +33,8 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
     DateTime? startAt,
     DateTime? endAt,
     String status = 'open',
+    String description = '',
+    String posterImageUrl = '',
   }) async {
     state = const AsyncValue.loading();
     try {
@@ -46,12 +48,19 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           status: status,
           startAt: startAt,
           endAt: endAt,
+          description: description,
+          posterImageUrl: posterImageUrl,
         );
         await DataService.addEvent(event);
         await loadEvents();
         return event;
       } else {
-        final created = await ApiService.addEvent(name, date, startAt: startAt, endAt: endAt, status: status);
+        final created = await ApiService.addEvent(name, date,
+            startAt: startAt,
+            endAt: endAt,
+            status: status,
+            description: description,
+            posterImageUrl: posterImageUrl);
         await loadEvents();
         return created;
       }
@@ -68,6 +77,8 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
     String? status,
     DateTime? startAt,
     DateTime? endAt,
+    String? description,
+    String? posterImageUrl,
   }) async {
     state = const AsyncValue.loading();
     try {
@@ -85,6 +96,8 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           status: status ?? current.status,
           startAt: startAt,
           endAt: endAt,
+          description: description ?? current.description,
+          posterImageUrl: posterImageUrl ?? current.posterImageUrl,
           attendees: current.attendees,
         );
         await DataService.deleteEvent(id);
@@ -99,6 +112,8 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           status: status,
           startAt: startAt,
           endAt: endAt,
+          description: description,
+          posterImageUrl: posterImageUrl,
         );
         await loadEvents();
         return updated;
