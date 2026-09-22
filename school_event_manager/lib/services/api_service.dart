@@ -97,9 +97,13 @@ class ApiService {
     });
   }
 
-  static Future<Map<String, dynamic>> login(String username, String password) async {
+  static Future<Map<String, dynamic>> login(String username, String password, {String loginMode = 'auto'}) async {
     final c = await _client();
-    final res = await c.postJson('/login', {'username': username, 'password': password});
+    final res = await c.postJson('/login', {
+      'username': username,
+      'password': password,
+      'loginMode': loginMode,
+    });
     final prefs = await SharedPreferences.getInstance();
     final token = res['token']?.toString();
     final user = res['user'];

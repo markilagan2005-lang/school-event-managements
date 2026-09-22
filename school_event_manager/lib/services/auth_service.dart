@@ -207,9 +207,9 @@ class AuthService {
     }
   }
 
-  static Future<(User? user, Map<String, dynamic>? meta)> login(String username, String password) async {
+  static Future<(User? user, Map<String, dynamic>? meta)> login(String username, String password, {String loginMode = 'auto'}) async {
     try {
-      final res = await ApiService.login(username, password);
+      final res = await ApiService.login(username, password, loginMode: loginMode);
       final userJson = res['user'] as Map<String, dynamic>?;
       if (userJson == null) return (null, null);
       final user = User.fromJson(userJson);

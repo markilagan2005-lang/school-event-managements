@@ -711,16 +711,19 @@ app.get('/api/verify-email', (req, res) => {
 
 // --- New OTP-based verification endpoints (used by the app) ---
 // Look up a user by username OR email (case insensitive)
-const findUserByHandle = (users, handle) => {
+const findUserByHandle = (users, handle, mode) => {
   if (!handle) return null;
   const h = String(handle).trim().toLowerCase();
   if (!h) return null;
-  return (
-    users.find(u => String(u.username || '').toLowerCase() === h) ||
-    users.find(u => u && u.email && String(u.email).toLowerCase() === h) ||
-    users.find(u => u && u.studentId && String(u.studentId).toLowerCase() === h) ||
-    null
-  );
+  const m = typeof mode === 'string' ? mode.trim().toLowerCase() : 'auto';
+  const findByUsername = () => users.find(u => String(u.username || '').toLowerCase() === h) || null;
+  const findByEmail = () => users.find(u => u && u.email && String(u.email).toLowerCase() === h) || null;
+  const findByStudentId = () => users.find(u => u && u.studentId && String(u.studentId).toLowerCase() === h) || null;
+  if (m === 'username') return findByUsername();
+  if (m === 'email') return findByEmail();
+  if (m === 'studentid') return findByStudentId();
+  // auto (backward compat): check all three OR'd
+  return findByUsername() || findByEmail() || findByStudentId() || null;
 };
 
 // --- Pre-registration email OTP (students MUST prove email ownership BEFORE account creation) ---
@@ -986,14 +989,14 @@ app.post('/api/reset-password', async (req, res) => {
 
 // Login
 app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, loginMode } = req.body;
+  const modeRaw = typeof loginMode === 'string' ? loginMode.trim() : 'auto';
+  const mode = ['auto', 'username', 'email', 'studentId'].includes(modeRaw) ? modeRaw : 'auto';
   let users = loadData(usersFile);
-  // Accept identifier: if it contains "@" treat it as email lookup, else username lookup.
-  // findUserByHandle already handles both cases, case-insensitive.
-  let user = findUserByHandle(users, username);
+  let user = findUserByHandle(users, username, mode);
 
   // Safety fallback: if default admin is missing in persisted data, recreate it.
-  if (!user && String(username).toLowerCase() === String(DEFAULT_ADMIN_USERNAME).toLowerCase()) {
+  if (!user && String(username).toLowerCase() === String(DEFAULT_ADMIN_USERNAME).toLowerCase() && (mode === 'auto' || mode === 'username')) {
     const hashedPassword = await hashPassword(DEFAULT_ADMIN_PASSWORD);
     users.push({
       id: uuidv4(),
@@ -1008,10 +1011,16 @@ app.post('/api/login', async (req, res) => {
       isVerified: true,
     });
     saveData(usersFile, users);
-    user = findUserByHandle(users, username);
+    user = findUserByHandle(users, username, mode);
   }
 
-  if (!user) return res.status(401).json({ error: 'Student ID, email, or username not found' });
+  if (!user) {
+    let msg = 'Student ID, email, or username not found';
+    if (mode === 'email') msg = 'No account found with that email address';
+    else if (mode === 'studentId') msg = 'No account found with that Student ID';
+    else if (mode === 'username') msg = 'Username not found';
+    return res.status(401).json({ error: msg });
+  }
   if (user.isVerified !== true) {
     // For STUDENT accounts: keep email-verification gate open. Try to auto-generate
     // a fresh OTP + auto-send if (a) none is pending or (b) previous one expired, so the

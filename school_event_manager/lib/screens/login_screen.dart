@@ -26,15 +26,56 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _identifierController.addListener(_syncCanSubmit);
+    _identifierController.addListener(_onIdentifierChanged);
     _passwordController.addListener(_syncCanSubmit);
     _syncCanSubmit();
   }
 
+  void _onIdentifierChanged() {
+    _syncCanSubmit();
+    // Always rebuild on identifier change so strict-mode warning banner + sign-in button rerender.
+    setState(() {});
+  }
+
   void _syncCanSubmit() {
-    final next = _identifierController.text.trim().isNotEmpty && _passwordController.text.isNotEmpty;
+    final id = _identifierController.text.trim();
+    final passwordOk = _passwordController.text.isNotEmpty;
+    final idOk = id.isNotEmpty && !_strictModeViolates(id).isViolation;
+    final next = idOk && passwordOk;
     if (next == _canSubmit) return;
     setState(() => _canSubmit = next);
+  }
+
+  String get _loginModeParam {
+    switch (_studentMode) {
+      case StudentLoginMode.email:
+        return 'email';
+      case StudentLoginMode.studentId:
+        return 'studentId';
+    }
+  }
+
+  ({bool isViolation, String message}) _strictModeViolates(String identifier) {
+    final v = identifier.trim();
+    if (v.isEmpty) return (isViolation: false, message: '');
+    switch (_studentMode) {
+      case StudentLoginMode.email:
+        if (v.contains('@')) return (isViolation: false, message: '');
+        final looksLikeStudentId = RegExp(r'^[0-9][0-9\-]{3,19}$').hasMatch(v);
+        if (looksLikeStudentId) {
+          return (
+            isViolation: true,
+            message: 'You selected Email mode but this looks like a Student ID. Switch to the Student ID tab first.'
+          );
+        }
+        return (isViolation: false, message: '');
+      case StudentLoginMode.studentId:
+        if (!v.contains('@')) return (isViolation: false, message: '');
+        return (
+          isViolation: true,
+          message: 'You selected Student ID mode but entered an email address. Switch to the Email tab first.'
+        );
+    }
   }
 
   bool _isStrongPassword(String password) {
@@ -190,6 +231,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   ? CrossFadeState.showFirst
                                   : CrossFadeState.showSecond,
                             ),
+                            if (_strictModeViolates(_identifierController.text).isViolation) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF2F2),
+                                  border: Border.all(color: const Color(0xFFFECACA)),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Icon(Icons.error_outline, color: Color(0xFFB91C1C), size: 20),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        _strictModeViolates(_identifierController.text).message,
+                                        style: const TextStyle(
+                                          color: Color(0xFF991B1B),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 12),
                             TextField(
                               controller: _passwordController,
@@ -215,6 +286,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       Future<AuthActionResult> doLogin() => authNotifier.login(
                                             _identifierController.text,
                                             _passwordController.text,
+                                            loginMode: _loginModeParam,
                                           );
                                       AuthActionResult result = await doLogin();
                                       if (!ctx.mounted) return;

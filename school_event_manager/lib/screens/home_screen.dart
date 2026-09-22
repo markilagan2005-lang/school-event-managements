@@ -464,7 +464,7 @@ class AdminHomeScreen extends ConsumerWidget {
         builder: (context) {
           return Scaffold(
             drawer: _AppDrawer(user: user, ref: ref),
-            extendBodyBehindAppBar: true,
+            extendBody: false,
             appBar: AppBar(
               title: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -565,7 +565,7 @@ class StudentHomeScreen extends ConsumerWidget {
       length: 3,
       child: Scaffold(
         drawer: _AppDrawer(user: user, ref: ref),
-        extendBodyBehindAppBar: true,
+        extendBody: false,
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -580,6 +580,7 @@ class StudentHomeScreen extends ConsumerWidget {
           backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
+          forceMaterialTransparency: true,
           elevation: 0,
           actions: const [
             SizedBox(width: 8),
@@ -621,7 +622,7 @@ class FacultyHomeScreen extends ConsumerWidget {
       length: 2,
       child: Scaffold(
         drawer: _AppDrawer(user: user, ref: ref),
-        extendBodyBehindAppBar: true,
+        extendBody: false,
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -636,6 +637,7 @@ class FacultyHomeScreen extends ConsumerWidget {
           backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
+          forceMaterialTransparency: true,
           elevation: 0,
           actions: const [
             SizedBox(width: 8),
@@ -672,12 +674,13 @@ class FacultyPendingApprovalScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      extendBody: false,
       appBar: AppBar(
         title: const Text('Faculty Verification'),
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
+        forceMaterialTransparency: true,
         elevation: 0,
         flexibleSpace: const _AppBarGradientBg(),
       ),
@@ -770,7 +773,7 @@ class FacultyEventsTab extends ConsumerWidget {
                   ],
                 )
               : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
                   itemCount: sorted.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
@@ -3602,10 +3605,6 @@ class _TabBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topPadding = MediaQuery.of(context).padding.top;
-    // kToolbarHeight = 56 (Material AppBar default) + kMinInteractiveDimension = 48 (TabBar default)
-    const appBarTabBarEstimate = kToolbarHeight + 48.0;
-    final topOffset = topPadding + appBarTabBarEstimate;
     return DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -3618,10 +3617,7 @@ class _TabBackground extends StatelessWidget {
           ],
         ),
       ),
-      child: Padding(
-        padding: EdgeInsets.only(top: topOffset),
-        child: child,
-      ),
+      child: child,
     );
   }
 }

@@ -67,14 +67,14 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     }
   }
 
-  Future<AuthActionResult> login(String username, String password) async {
+  Future<AuthActionResult> login(String username, String password, {String loginMode = 'auto'}) async {
     if (username.trim().isEmpty || password.isEmpty) {
       state = const AsyncValue.data(null);
       return const AuthActionResult(errorMessage: 'Enter username and password');
     }
     state = const AsyncValue.loading();
     try {
-      final (user, _) = await AuthService.login(username, password);
+      final (user, _) = await AuthService.login(username, password, loginMode: loginMode);
       if (user != null) {
         state = AsyncValue.data(user);
         return const AuthActionResult(succeeded: true);
