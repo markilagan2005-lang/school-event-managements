@@ -283,8 +283,27 @@ const isValidOtpForUser = (user, candidate, now = Date.now()) => {
 
 // Middleware
 app.set('trust proxy', 1);
-app.use(cors({ origin: '*' })); 
-app.use(bodyParser.json());
+app.use(cors({ origin: '*' }));
+const MAX_BODY_MB = 5;
+const MAX_BODY_BYTES = MAX_BODY_MB * 1024 * 1024;
+app.use(bodyParser.json({ limit: MAX_BODY_BYTES }));
+app.use(bodyParser.urlencoded({ extended: true, limit: MAX_BODY_BYTES }));
+// Catch body-parser 413 / payload errors and return JSON (never Render's default HTML "Payload Too Large" page).
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'Payload too large',
+      message: `Request body exceeds the ${MAX_BODY_MB}MB limit. Compress your poster image and try again.`,
+      maxSizeMb: MAX_BODY_MB,
+    });
+  }
+  if (err && err.status && err.status >= 400) {
+    return res.status(err.status).json({
+      error: err.message || 'Bad request',
+    });
+  }
+  next(err);
+});
 app.use(express.static('.')); 
 
 // Storage (JSON files + optional MongoDB mirror)
@@ -1067,13 +1086,32 @@ app.get('/api/events', authenticateToken, (req, res) => {
   res.json(events);
 });
 
+const MAX_POSTER_CHARS = 1_500_000; // ~1.5MB base64 ≈ 1.1MB raw image (safe cap for Render)
+const MAX_DESC_CHARS = 5000;
+
 app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
   const events = loadData(eventsFile);
   const { name, date, status, startAt, endAt, description, posterImageUrl } = req.body;
   if (!name || !date) return res.status(400).json({ error: 'Invalid payload' });
-  const cleanPoster = typeof posterImageUrl === 'string' && posterImageUrl.trim().length < 2_000_000
+  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length > MAX_POSTER_CHARS) {
+    return res.status(413).json({
+      error: 'Poster image too large',
+      message: 'The poster image exceeds the 1.5MB limit after encoding. Choose a smaller photo or reduce quality.',
+      maxSizeMb: 1.5,
+    });
+  }
+  if (typeof description === 'string' && description.length > MAX_DESC_CHARS) {
+    return res.status(400).json({
+      error: 'Description too long',
+      message: `Event description is ${description.length} chars. Limit is ${MAX_DESC_CHARS}.`,
+    });
+  }
+  const cleanPoster = (typeof posterImageUrl === 'string' && posterImageUrl.trim().length <= MAX_POSTER_CHARS)
     ? posterImageUrl.trim()
     : '';
+  const cleanDesc = (typeof description === 'string' && description.length <= MAX_DESC_CHARS)
+    ? description.trim()
+    : (description ?? '').toString().trim().slice(0, MAX_DESC_CHARS);
   const event = {
     id: uuidv4(),
     name,
@@ -1081,7 +1119,7 @@ app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
     status: ['draft', 'open', 'closed'].includes(status) ? status : 'open',
     startAt: startAt || null,
     endAt: endAt || null,
-    description: typeof description === 'string' ? description.trim() : '',
+    description: cleanDesc,
     posterImageUrl: cleanPoster,
     attendees: []
   };
@@ -1095,13 +1133,26 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
   const idx = events.findIndex(e => e.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Event not found' });
   const { name, date, status, startAt, endAt, description, posterImageUrl } = req.body;
+  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length > MAX_POSTER_CHARS) {
+    return res.status(413).json({
+      error: 'Poster image too large',
+      message: 'The poster image exceeds the 1.5MB limit after encoding. Choose a smaller photo or reduce quality.',
+      maxSizeMb: 1.5,
+    });
+  }
+  if (typeof description === 'string' && description.length > MAX_DESC_CHARS) {
+    return res.status(400).json({
+      error: 'Description too long',
+      message: `Event description is ${description.length} chars. Limit is ${MAX_DESC_CHARS}.`,
+    });
+  }
   if (name != null) events[idx].name = name;
   if (date != null) events[idx].date = date;
   if (status != null && ['draft', 'open', 'closed'].includes(status)) events[idx].status = status;
   events[idx].startAt = startAt || null;
   events[idx].endAt = endAt || null;
-  if (typeof description === 'string') events[idx].description = description.trim();
-  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length < 2_000_000) {
+  if (typeof description === 'string') events[idx].description = description.trim().slice(0, MAX_DESC_CHARS);
+  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length <= MAX_POSTER_CHARS) {
     events[idx].posterImageUrl = posterImageUrl.trim();
   }
   saveData(eventsFile, events);

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
+import 'dart:ui' as ui;
+import 'dart:ui' show ImageByteFormat, PictureRecorder, Canvas, instantiateImageCodec;
 import '../main.dart' show AppThemeAssets, AppColors;
 import '../providers/auth_provider.dart';
 import '../services/event_provider.dart';
@@ -44,6 +46,53 @@ Future<void> _openStandaloneScanner(BuildContext context, User user) {
       builder: (_) => _StandaloneQrScannerScreen(user: user),
     ),
   );
+}
+
+const int _kPosterMaxSidePx = 1280;
+const int _kPosterMaxBase64Chars = 900 * 1024; // 900KB safe cap for client
+
+Future<Uint8List> _compressPosterBytes(Uint8List raw) async {
+  try {
+    final ui.Image decoded = await instantiateImageCodec(
+      raw,
+      allowUpscaling: false,
+    ).then((codec) async {
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      return frame.image;
+    });
+    final w = decoded.width;
+    final h = decoded.height;
+    if (w <= 0 || h <= 0) { decoded.dispose(); return raw; }
+    int targetW = w;
+    int targetH = h;
+    if (w > h && w > _kPosterMaxSidePx) {
+      targetW = _kPosterMaxSidePx;
+      targetH = (h * _kPosterMaxSidePx) ~/ w;
+    } else if (h >= w && h > _kPosterMaxSidePx) {
+      targetH = _kPosterMaxSidePx;
+      targetW = (w * _kPosterMaxSidePx) ~/ h;
+    }
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawImageRect(
+      decoded,
+      Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+      Rect.fromLTWH(0, 0, targetW.toDouble(), targetH.toDouble()),
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+    final picture = recorder.endRecording();
+    final ui.Image resampled = await picture.toImage(targetW, targetH);
+    final ByteData? pngBytes = await resampled.toByteData(format: ImageByteFormat.png);
+    decoded.dispose();
+    resampled.dispose();
+    picture.dispose();
+    if (pngBytes == null) return raw;
+    final result = Uint8List.view(pngBytes.buffer);
+    return result.isEmpty ? raw : result;
+  } catch (_) {
+    return raw;
+  }
 }
 
 class _AppDrawer extends StatelessWidget {
@@ -883,17 +932,19 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: descriptionController,
-                    maxLines: 4,
-                    minLines: 2,
+                    maxLines: 6,
+                    minLines: 3,
+                    maxLength: 5000,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: const InputDecoration(
                       labelText: 'Description',
                       alignLabelWithHint: true,
+                      counterText: '',
                       prefixIcon: Padding(
-                        padding: EdgeInsets.only(bottom: 48),
+                        padding: EdgeInsets.only(bottom: 88),
                         child: Icon(Icons.notes),
                       ),
-                      hintText: 'Write event details, venue, required attire, etc.',
+                      hintText: 'Write event details, venue, required attire, etc. (max 5000 chars)',
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -940,13 +991,46 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                               final picked = await imagePicker.pickImage(
                                 source: ImageSource.gallery,
                                 maxWidth: 1280,
-                                imageQuality: 82,
+                                maxHeight: 1280,
+                                imageQuality: 72,
                               );
                               if (picked != null) {
-                                final bytes = await picked.readAsBytes();
+                                Uint8List bytes = await picked.readAsBytes();
+                                try {
+                                  final compressed = await _compressPosterBytes(bytes);
+                                  if (compressed.isNotEmpty) bytes = compressed;
+                                } catch (_) {
+                                  // keep original if resampler fails
+                                }
+                                if (bytes.lengthInBytes > 1200 * 1024) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Poster image is too large (${(bytes.lengthInBytes / 1024).toStringAsFixed(0)}KB). Pick a smaller photo.',
+                                        ),
+                                        backgroundColor: Colors.deepOrangeAccent,
+                                      ),
+                                    );
+                                  }
+                                  setState(() => busyPicking = false);
+                                  return;
+                                }
                                 final mime = picked.mimeType ??
                                     (picked.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
                                 final b64 = base64Encode(bytes);
+                                if (b64.length > _kPosterMaxBase64Chars) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Poster still too large after compression. Pick a smaller image.'),
+                                        backgroundColor: Colors.deepOrangeAccent,
+                                      ),
+                                    );
+                                  }
+                                  setState(() => busyPicking = false);
+                                  return;
+                                }
                                 setState(() {
                                   pickedBytes = bytes;
                                   posterDataUrl = 'data:$mime;base64,$b64';
