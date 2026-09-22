@@ -284,7 +284,7 @@ const isValidOtpForUser = (user, candidate, now = Date.now()) => {
 // Middleware
 app.set('trust proxy', 1);
 app.use(cors({ origin: '*' }));
-const MAX_BODY_MB = 5;
+const MAX_BODY_MB = 8;
 const MAX_BODY_BYTES = MAX_BODY_MB * 1024 * 1024;
 app.use(bodyParser.json({ limit: MAX_BODY_BYTES }));
 app.use(bodyParser.urlencoded({ extended: true, limit: MAX_BODY_BYTES }));
@@ -1095,7 +1095,7 @@ app.get('/api/events', authenticateToken, (req, res) => {
   res.json(events);
 });
 
-const MAX_POSTER_CHARS = 1_500_000; // ~1.5MB base64 ≈ 1.1MB raw image (safe cap for Render)
+const MAX_POSTER_CHARS = 7_000_000; // ~7MB base64 ≈ 5.25MB raw image (target ≈ 5 MB)
 const MAX_DESC_CHARS = 5000;
 
 app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
@@ -1105,8 +1105,8 @@ app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
   if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length > MAX_POSTER_CHARS) {
     return res.status(413).json({
       error: 'Poster image too large',
-      message: 'The poster image exceeds the 1.5MB limit after encoding. Choose a smaller photo or reduce quality.',
-      maxSizeMb: 1.5,
+      message: 'The poster image exceeds the 5 MB limit. Upload a smaller file.',
+      maxSizeMb: 5,
     });
   }
   if (typeof description === 'string' && description.length > MAX_DESC_CHARS) {
@@ -1145,8 +1145,8 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
   if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length > MAX_POSTER_CHARS) {
     return res.status(413).json({
       error: 'Poster image too large',
-      message: 'The poster image exceeds the 1.5MB limit after encoding. Choose a smaller photo or reduce quality.',
-      maxSizeMb: 1.5,
+      message: 'The poster image exceeds the 5 MB limit. Upload a smaller file.',
+      maxSizeMb: 5,
     });
   }
   if (typeof description === 'string' && description.length > MAX_DESC_CHARS) {
