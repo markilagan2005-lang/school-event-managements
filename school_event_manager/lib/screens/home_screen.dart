@@ -2853,20 +2853,16 @@ class _ScanFramePainter extends CustomPainter {
     const cornerLen = 36.0;
     const stroke = 4.0;
     final rect = Rect.fromLTWH(inset, inset + 8, size.width - inset * 2, size.height - inset * 2 - 16);
-    final cutPaint = Paint()..color = Colors.black.withValues(alpha: 0.45);
     final framePaint = Paint()
       ..color = const Color(0xFF3b82f6)
       ..style = PaintingStyle.stroke
       ..strokeWidth = stroke
       ..strokeCap = StrokeCap.round;
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      cutPaint,
-    );
-    canvas.drawRect(
-      rect,
-      Paint()..blendMode = BlendMode.clear,
-    );
+    final dimPaint = Paint()..color = Colors.black.withValues(alpha: 0.45);
+    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final window = Path()..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
+    final dim = Path.combine(PathOperation.difference, outer, window);
+    canvas.drawPath(dim, dimPaint);
     // Top-left
     final tl = rect.topLeft;
     canvas.drawLine(tl, tl.translate(cornerLen, 0), framePaint);
@@ -2941,12 +2937,12 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
     final poster = _posterImage();
     final textTheme = Theme.of(context).textTheme;
     return Scaffold(
-      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Text(widget.event.name),
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
+        forceMaterialTransparency: true,
         elevation: 0,
         flexibleSpace: const _AppBarGradientBg(),
       ),
@@ -3388,16 +3384,13 @@ class _StandaloneQrScannerScreen extends ConsumerStatefulWidget {
 class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScannerScreen> {
   @override
   Widget build(BuildContext context) {
-    final topPadding = MediaQuery.of(context).padding.top;
-    const appBarEstimate = kToolbarHeight;
-    final topOffset = topPadding + appBarEstimate + 16;
     return Scaffold(
-      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Scan QR'),
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
+        forceMaterialTransparency: true,
         elevation: 0,
         flexibleSpace: const _AppBarGradientBg(),
       ),
@@ -3413,9 +3406,12 @@ class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScanner
             ],
           ),
         ),
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(16, topOffset, 16, 16),
-          child: StudentScannerTab(user: widget.user),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: StudentScannerTab(user: widget.user),
+          ),
         ),
       ),
     );
