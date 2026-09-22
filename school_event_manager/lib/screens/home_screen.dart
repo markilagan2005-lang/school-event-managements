@@ -460,51 +460,96 @@ class AdminHomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
       length: 4,
-      child: Scaffold(
-        drawer: _AppDrawer(user: user, ref: ref),
-        extendBodyBehindAppBar: true,
-        appBar: AppBar(
-          title: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Administrator'),
-              Text(
-                user.username,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
+      child: Builder(
+        builder: (context) {
+          return Scaffold(
+            drawer: _AppDrawer(user: user, ref: ref),
+            extendBodyBehindAppBar: true,
+            appBar: AppBar(
+              title: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Administrator'),
+                  Text(
+                    user.username,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
+                  ),
+                ],
               ),
-            ],
-          ),
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          actions: const [
-            SizedBox(width: 8),
-          ],
-          flexibleSpace: const _AppBarGradientBg(),
-          bottom: const TabBar(
-            indicatorColor: Colors.white,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white70,
-            tabs: [
-              Tab(icon: Icon(Icons.event), text: 'Events'),
-              Tab(icon: Icon(Icons.list_alt), text: 'Attendance'),
-              Tab(icon: Icon(Icons.summarize), text: 'Reports'),
-              Tab(icon: Icon(Icons.manage_accounts), text: 'Users'),
-            ],
-          ),
-        ),
-        body: const _TabBackground(
-          child: TabBarView(
-            children: [
-              AdminEventsTab(),
-              AdminAttendanceTab(),
-              AdminReportsTab(),
-              AdminUsersTab(),
-            ],
-          ),
-        ),
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.white,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              actions: const [
+                SizedBox(width: 8),
+              ],
+              flexibleSpace: const _AppBarGradientBg(),
+              bottom: const TabBar(
+                indicatorColor: Colors.white,
+                labelColor: Colors.white,
+                unselectedLabelColor: Colors.white70,
+                tabs: [
+                  Tab(icon: Icon(Icons.event), text: 'Events'),
+                  Tab(icon: Icon(Icons.list_alt), text: 'Attendance'),
+                  Tab(icon: Icon(Icons.summarize), text: 'Reports'),
+                  Tab(icon: Icon(Icons.manage_accounts), text: 'Users'),
+                ],
+              ),
+            ),
+            body: const _TabBackground(
+              child: TabBarView(
+                children: [
+                  AdminEventsTab(),
+                  AdminAttendanceTab(),
+                  AdminReportsTab(),
+                  AdminUsersTab(),
+                ],
+              ),
+            ),
+            floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+            floatingActionButton: Consumer(
+              builder: (context, ref, _) {
+                return _AdminEventsFab(builderContext: context, ref: ref);
+              },
+            ),
+          );
+        },
       ),
+    );
+  }
+}
+
+class _AdminEventsFab extends StatelessWidget {
+  const _AdminEventsFab({required this.builderContext, required this.ref});
+  final BuildContext builderContext;
+  final WidgetRef ref;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = DefaultTabController.of(builderContext);
+    return AnimatedBuilder(
+      animation: controller.animation ?? const AlwaysStoppedAnimation(0),
+      builder: (ctx, child) {
+        final showFab = controller.index == 0;
+        return AnimatedSlide(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          offset: showFab ? const Offset(0, 0) : const Offset(0, 1.6),
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: showFab ? 1.0 : 0.0,
+            child: FloatingActionButton.extended(
+              heroTag: 'admin_add_event_fab',
+              elevation: 6,
+              onPressed: showFab ? () => _showAddEventDialog(ctx, ref) : null,
+              backgroundColor: AppColors.primaryStart,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Event', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -785,11 +830,6 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                     ),
                   ),
-                  FilledButton.icon(
-                    onPressed: () => _showAddEventDialog(context),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add'),
-                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -894,309 +934,309 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
       },
     );
   }
+}
 
-  Future<void> _showAddEventDialog(BuildContext context) async {
-    final nameController = TextEditingController();
-    final descriptionController = TextEditingController();
-    DateTime date = DateTime.now();
-    String status = 'open';
-    bool enableWindow = false;
-    TimeOfDay startTime = const TimeOfDay(hour: 8, minute: 0);
-    TimeOfDay endTime = const TimeOfDay(hour: 17, minute: 0);
-    Uint8List? pickedBytes;
-    String posterDataUrl = '';
-    bool busyPicking = false;
-    final scrollController = ScrollController();
-    final imagePicker = ImagePicker();
-    await showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Add Event'),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 520),
-            child: SingleChildScrollView(
-              controller: scrollController,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Event name',
-                      prefixIcon: Icon(Icons.event_available),
-                    ),
-                    textInputAction: TextInputAction.next,
+Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
+  final nameController = TextEditingController();
+  final descriptionController = TextEditingController();
+  DateTime date = DateTime.now();
+  String status = 'open';
+  bool enableWindow = false;
+  TimeOfDay startTime = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay endTime = const TimeOfDay(hour: 17, minute: 0);
+  Uint8List? pickedBytes;
+  String posterDataUrl = '';
+  bool busyPicking = false;
+  final scrollController = ScrollController();
+  final imagePicker = ImagePicker();
+  await showDialog<void>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Add Event'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 520),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Event name',
+                    prefixIcon: Icon(Icons.event_available),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: descriptionController,
-                    maxLines: 6,
-                    minLines: 3,
-                    maxLength: 5000,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: const InputDecoration(
-                      labelText: 'Description',
-                      alignLabelWithHint: true,
-                      counterText: '',
-                      prefixIcon: Padding(
-                        padding: EdgeInsets.only(bottom: 88),
-                        child: Icon(Icons.notes),
-                      ),
-                      hintText: 'Write event details, venue, required attire, etc. (max 5000 chars)',
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: descriptionController,
+                  maxLines: 6,
+                  minLines: 3,
+                  maxLength: 5000,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Description',
+                    alignLabelWithHint: true,
+                    counterText: '',
+                    prefixIcon: Padding(
+                      padding: EdgeInsets.only(bottom: 88),
+                      child: Icon(Icons.notes),
                     ),
+                    hintText: 'Write event details, venue, required attire, etc. (max 5000 chars)',
                   ),
-                  const SizedBox(height: 12),
-                  if (pickedBytes != null) ...[
-                    Stack(
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          height: 180,
-                          decoration: BoxDecoration(
-                            color: Colors.black12,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: Image.memory(pickedBytes!, fit: BoxFit.cover),
-                        ),
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: IconButton.filled(
-                            style: IconButton.styleFrom(
-                              backgroundColor: Colors.black54,
-                              foregroundColor: Colors.white,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                pickedBytes = null;
-                                posterDataUrl = '';
-                              });
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  OutlinedButton.icon(
-                    onPressed: busyPicking
-                        ? null
-                        : () async {
-                            setState(() => busyPicking = true);
-                            try {
-                              final picked = await imagePicker.pickImage(
-                                source: ImageSource.gallery,
-                                maxWidth: 1280,
-                                maxHeight: 1280,
-                                imageQuality: 72,
-                              );
-                              if (picked != null) {
-                                Uint8List bytes = await picked.readAsBytes();
-                                try {
-                                  final compressed = await _compressPosterBytes(bytes);
-                                  if (compressed.isNotEmpty) bytes = compressed;
-                                } catch (_) {
-                                  // keep original if resampler fails
-                                }
-                                if (bytes.lengthInBytes > 1200 * 1024) {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Poster image is too large (${(bytes.lengthInBytes / 1024).toStringAsFixed(0)}KB). Pick a smaller photo.',
-                                        ),
-                                        backgroundColor: Colors.deepOrangeAccent,
-                                      ),
-                                    );
-                                  }
-                                  setState(() => busyPicking = false);
-                                  return;
-                                }
-                                final mime = picked.mimeType ??
-                                    (picked.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
-                                final b64 = base64Encode(bytes);
-                                if (b64.length > _kPosterMaxBase64Chars) {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Poster still too large after compression. Pick a smaller image.'),
-                                        backgroundColor: Colors.deepOrangeAccent,
-                                      ),
-                                    );
-                                  }
-                                  setState(() => busyPicking = false);
-                                  return;
-                                }
-                                setState(() {
-                                  pickedBytes = bytes;
-                                  posterDataUrl = 'data:$mime;base64,$b64';
-                                });
-                              }
-                            } finally {
-                              if (context.mounted) {
-                                setState(() => busyPicking = false);
-                              }
-                            }
-                          },
-                    icon: busyPicking
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.image_outlined),
-                    label: Text(pickedBytes == null ? 'Attach poster image' : 'Change poster image'),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
+                ),
+                const SizedBox(height: 12),
+                if (pickedBytes != null) ...[
+                  Stack(
                     children: [
-                      Expanded(child: Text('${date.toLocal()}'.split(' ')[0])),
-                      TextButton(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: date,
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100),
-                          );
-                          if (picked != null) {
-                            setState(() => date = picked);
+                      Container(
+                        width: double.infinity,
+                        height: 180,
+                        decoration: BoxDecoration(
+                          color: Colors.black12,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Image.memory(pickedBytes!, fit: BoxFit.cover),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: IconButton.filled(
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black54,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              pickedBytes = null;
+                              posterDataUrl = '';
+                            });
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                OutlinedButton.icon(
+                  onPressed: busyPicking
+                      ? null
+                      : () async {
+                          setState(() => busyPicking = true);
+                          try {
+                            final picked = await imagePicker.pickImage(
+                              source: ImageSource.gallery,
+                              maxWidth: 1280,
+                              maxHeight: 1280,
+                              imageQuality: 72,
+                            );
+                            if (picked != null) {
+                              Uint8List bytes = await picked.readAsBytes();
+                              try {
+                                final compressed = await _compressPosterBytes(bytes);
+                                if (compressed.isNotEmpty) bytes = compressed;
+                              } catch (_) {
+                                // keep original if resampler fails
+                              }
+                              if (bytes.lengthInBytes > 1200 * 1024) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Poster image is too large (${(bytes.lengthInBytes / 1024).toStringAsFixed(0)}KB). Pick a smaller photo.',
+                                      ),
+                                      backgroundColor: Colors.deepOrangeAccent,
+                                    ),
+                                  );
+                                }
+                                setState(() => busyPicking = false);
+                                return;
+                              }
+                              final mime = picked.mimeType ??
+                                  (picked.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+                              final b64 = base64Encode(bytes);
+                              if (b64.length > _kPosterMaxBase64Chars) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Poster still too large after compression. Pick a smaller image.'),
+                                      backgroundColor: Colors.deepOrangeAccent,
+                                    ),
+                                  );
+                                }
+                                setState(() => busyPicking = false);
+                                return;
+                              }
+                              setState(() {
+                                pickedBytes = bytes;
+                                posterDataUrl = 'data:$mime;base64,$b64';
+                              });
+                            }
+                          } finally {
+                            if (context.mounted) {
+                              setState(() => busyPicking = false);
+                            }
                           }
                         },
-                        child: const Text('Pick date'),
+                  icon: busyPicking
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.image_outlined),
+                  label: Text(pickedBytes == null ? 'Attach poster image' : 'Change poster image'),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: Text('${date.toLocal()}'.split(' ')[0])),
+                    TextButton(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: date,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime(2100),
+                        );
+                        if (picked != null) {
+                          setState(() => date = picked);
+                        }
+                      },
+                      child: const Text('Pick date'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: status,
+                  decoration: const InputDecoration(labelText: 'Status'),
+                  items: const [
+                    DropdownMenuItem(value: 'open', child: Text('Open')),
+                    DropdownMenuItem(value: 'closed', child: Text('Closed')),
+                    DropdownMenuItem(value: 'draft', child: Text('Draft')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => status = value);
+                  },
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Enable time window'),
+                  value: enableWindow,
+                  onChanged: (v) => setState(() => enableWindow = v),
+                ),
+                if (enableWindow) ...[
+                  Row(
+                    children: [
+                      Expanded(child: Text('Start: ${startTime.format(context)}')),
+                      TextButton(
+                        onPressed: () async {
+                          final picked = await showTimePicker(context: context, initialTime: startTime);
+                          if (picked != null) setState(() => startTime = picked);
+                        },
+                        child: const Text('Pick'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    initialValue: status,
-                    decoration: const InputDecoration(labelText: 'Status'),
-                    items: const [
-                      DropdownMenuItem(value: 'open', child: Text('Open')),
-                      DropdownMenuItem(value: 'closed', child: Text('Closed')),
-                      DropdownMenuItem(value: 'draft', child: Text('Draft')),
+                  Row(
+                    children: [
+                      Expanded(child: Text('End: ${endTime.format(context)}')),
+                      TextButton(
+                        onPressed: () async {
+                          final picked = await showTimePicker(context: context, initialTime: endTime);
+                          if (picked != null) setState(() => endTime = picked);
+                        },
+                        child: const Text('Pick'),
+                      ),
                     ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => status = value);
-                    },
                   ),
-                  const SizedBox(height: 8),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Enable time window'),
-                    value: enableWindow,
-                    onChanged: (v) => setState(() => enableWindow = v),
-                  ),
-                  if (enableWindow) ...[
-                    Row(
-                      children: [
-                        Expanded(child: Text('Start: ${startTime.format(context)}')),
-                        TextButton(
-                          onPressed: () async {
-                            final picked = await showTimePicker(context: context, initialTime: startTime);
-                            if (picked != null) setState(() => startTime = picked);
-                          },
-                          child: const Text('Pick'),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        Expanded(child: Text('End: ${endTime.format(context)}')),
-                        TextButton(
-                          onPressed: () async {
-                            final picked = await showTimePicker(context: context, initialTime: endTime);
-                            if (picked != null) setState(() => endTime = picked);
-                          },
-                          child: const Text('Pick'),
-                        ),
-                      ],
-                    ),
-                  ],
                 ],
-              ),
+              ],
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () async {
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-                final prefs = await SharedPreferences.getInstance();
-                final token = prefs.getString('auth_token');
-                if (token == null) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Offline mode: connect to the server and login again to create events.')),
-                    );
-                  }
-                  return;
-                }
-                DateTime? startAt;
-                DateTime? endAtDt;
-                if (enableWindow) {
-                  startAt = DateTime(date.year, date.month, date.day, startTime.hour, startTime.minute);
-                  endAtDt = DateTime(date.year, date.month, date.day, endTime.hour, endTime.minute);
-                }
-                final created = await ref.read(eventProvider.notifier).addEvent(
-                      name,
-                      date,
-                      status: status,
-                      startAt: startAt,
-                      endAt: endAtDt,
-                      description: descriptionController.text.trim(),
-                      posterImageUrl: posterDataUrl,
-                    );
-                if (!context.mounted) return;
-                Navigator.pop(context);
-                if (created != null) {
-                  await _showEventQr(context, created);
-                }
-              },
-              child: const Text('Add'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showEventQr(BuildContext context, Event event) async {
-    final data = jsonEncode({'eventId': event.id});
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Event QR: ${event.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: QrImageView(data: data, size: 220),
-            ),
-            const SizedBox(height: 12),
-            SelectableText(data),
-          ],
         ),
         actions: [
-          TextButton(
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
             onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: data));
-              if (context.mounted) Navigator.pop(context);
+              final name = nameController.text.trim();
+              if (name.isEmpty) return;
+              final prefs = await SharedPreferences.getInstance();
+              final token = prefs.getString('auth_token');
+              if (token == null) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Offline mode: connect to the server and login again to create events.')),
+                  );
+                }
+                return;
+              }
+              DateTime? startAt;
+              DateTime? endAtDt;
+              if (enableWindow) {
+                startAt = DateTime(date.year, date.month, date.day, startTime.hour, startTime.minute);
+                endAtDt = DateTime(date.year, date.month, date.day, endTime.hour, endTime.minute);
+              }
+              final created = await ref.read(eventProvider.notifier).addEvent(
+                    name,
+                    date,
+                    status: status,
+                    startAt: startAt,
+                    endAt: endAtDt,
+                    description: descriptionController.text.trim(),
+                    posterImageUrl: posterDataUrl,
+                  );
+              if (!context.mounted) return;
+              Navigator.pop(context);
+              if (created != null) {
+                await _showEventQr(context, created);
+              }
             },
-            child: const Text('Copy'),
+            child: const Text('Add'),
           ),
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
+
+Future<void> _showEventQr(BuildContext context, Event event) async {
+  final data = jsonEncode({'eventId': event.id});
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Event QR: ${event.name}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: QrImageView(data: data, size: 220),
+          ),
+          const SizedBox(height: 12),
+          SelectableText(data),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: data));
+            if (context.mounted) Navigator.pop(context);
+          },
+          child: const Text('Copy'),
+        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+      ],
+    ),
+  );
 }
 
 class AdminAttendanceTab extends ConsumerWidget {
@@ -2292,10 +2332,26 @@ class StudentScannerTab extends ConsumerStatefulWidget {
 }
 
 class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
+  late final MobileScannerController _scannerController;
   bool _processing = false;
   String _message = 'Scan a QR code to mark attendance.';
   int _lastRefreshMs = 0;
   bool _pickingFaculty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      autoStart: true,
+    );
+  }
+
+  @override
+  void dispose() {
+    _scannerController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2370,11 +2426,57 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
                 borderRadius: BorderRadius.circular(20),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
+                    color: Colors.black,
                     border: Border.all(color: const Color(0xFFE6E8F0)),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: MobileScanner(
-                    onDetect: (capture) => _onDetect(capture, events),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      MobileScanner(
+                        controller: _scannerController,
+                        fit: BoxFit.cover,
+                        errorBuilder: (ctx, error, _) => Container(
+                          color: const Color(0xFF0F172A),
+                          padding: const EdgeInsets.all(20),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.no_photography_outlined, size: 56, color: Colors.white70),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'Camera unavailable',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _friendlyMobileError(error),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                ),
+                                const SizedBox(height: 14),
+                                ElevatedButton.icon(
+                                  onPressed: () => _scannerController.start(),
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Try again'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        placeholderBuilder: (ctx, _) => Container(
+                          color: const Color(0xFF0F172A),
+                          child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+                        ),
+                        onDetect: (capture) => _onDetect(capture, events),
+                      ),
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _ScanFramePainter(),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -2743,6 +2845,65 @@ class _EventListTile extends StatelessWidget {
   }
 }
 
+String _friendlyMobileError(Object? error) {
+  final s = error?.toString() ?? '';
+  if (s.contains('permission') || s.contains('Permission')) {
+    return 'Camera permission is required. Please enable camera access for this app in your phone settings, then try again.';
+  }
+  if (s.contains('already') || s.contains('active')) {
+    return 'The camera is already in use. Please close any other camera apps and tap "Try again".';
+  }
+  if (s.contains('not found') || s.contains('unavailable') || s.toLowerCase().contains('no camera')) {
+    return 'No back camera was detected on this device.';
+  }
+  return s.isEmpty
+      ? 'The camera could not be started. Please restart the app and allow camera permission when asked.'
+      : s;
+}
+
+class _ScanFramePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    const inset = 48.0;
+    const cornerLen = 36.0;
+    const stroke = 4.0;
+    final rect = Rect.fromLTWH(inset, inset + 8, size.width - inset * 2, size.height - inset * 2 - 16);
+    final cutPaint = Paint()..color = Colors.black.withValues(alpha: 0.45);
+    final framePaint = Paint()
+      ..color = const Color(0xFF3b82f6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      cutPaint,
+    );
+    canvas.drawRect(
+      rect,
+      Paint()..blendMode = BlendMode.clear,
+    );
+    // Top-left
+    final tl = rect.topLeft;
+    canvas.drawLine(tl, tl.translate(cornerLen, 0), framePaint);
+    canvas.drawLine(tl, tl.translate(0, cornerLen), framePaint);
+    // Top-right
+    final tr = rect.topRight;
+    canvas.drawLine(tr, tr.translate(-cornerLen, 0), framePaint);
+    canvas.drawLine(tr, tr.translate(0, cornerLen), framePaint);
+    // Bottom-left
+    final bl = rect.bottomLeft;
+    canvas.drawLine(bl, bl.translate(cornerLen, 0), framePaint);
+    canvas.drawLine(bl, bl.translate(0, -cornerLen), framePaint);
+    // Bottom-right
+    final br = rect.bottomRight;
+    canvas.drawLine(br, br.translate(-cornerLen, 0), framePaint);
+    canvas.drawLine(br, br.translate(0, -cornerLen), framePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _EventDetailScreen extends ConsumerStatefulWidget {
   const _EventDetailScreen({required this.event, required this.user});
   final Event event;
@@ -2758,6 +2919,13 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
   String _scanMessage = 'Scan the event QR to record your attendance.';
   bool _pickingFaculty = false;
   int _lastRefreshMs = 0;
+  MobileScannerController? _detailScannerController;
+
+  @override
+  void dispose() {
+    _detailScannerController?.dispose();
+    super.dispose();
+  }
 
   Uint8List? _decodePoster() {
     final url = widget.event.posterImageUrl;
@@ -2983,17 +3151,66 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
                         borderRadius: BorderRadius.circular(20),
                         child: DecoratedBox(
                           decoration: BoxDecoration(
+                            color: Colors.black,
                             border: Border.all(color: const Color(0xFFE6E8F0)),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: SizedBox(
                             height: 300,
+                            width: double.infinity,
                             child: Consumer(
                               builder: (context, cRef, _) {
                                 final eventsState = cRef.watch(eventProvider);
                                 final all = eventsState.valueOrNull ?? <Event>[];
-                                return MobileScanner(
-                                  onDetect: (capture) => _onDetect(capture, all),
+                                _detailScannerController ??= MobileScannerController(
+                                  detectionSpeed: DetectionSpeed.noDuplicates,
+                                  autoStart: true,
+                                );
+                                return Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    MobileScanner(
+                                      controller: _detailScannerController!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (ctx, error, _) => Container(
+                                        color: const Color(0xFF0F172A),
+                                        padding: const EdgeInsets.all(14),
+                                        child: Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(Icons.no_photography_outlined, size: 44, color: Colors.white70),
+                                              const SizedBox(height: 8),
+                                              const Text(
+                                                'Camera unavailable',
+                                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                _friendlyMobileError(error),
+                                                textAlign: TextAlign.center,
+                                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              ElevatedButton.icon(
+                                                onPressed: () => _detailScannerController?.start(),
+                                                icon: const Icon(Icons.refresh),
+                                                label: const Text('Retry'),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      placeholderBuilder: (ctx, _) => Container(
+                                        color: const Color(0xFF0F172A),
+                                        child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+                                      ),
+                                      onDetect: (capture) => _onDetect(capture, all),
+                                    ),
+                                    Positioned.fill(
+                                      child: CustomPaint(painter: _ScanFramePainter()),
+                                    ),
+                                  ],
                                 );
                               },
                             ),
@@ -3004,10 +3221,18 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: () => setState(() {
-                            _showScanner = false;
-                            _scanMessage = 'Scan the event QR to record your attendance.';
-                          }),
+                          onPressed: () async {
+                            try {
+                              await _detailScannerController?.stop();
+                            } catch (_) {}
+                            _detailScannerController?.dispose();
+                            if (!mounted) return;
+                            setState(() {
+                              _showScanner = false;
+                              _detailScannerController = null;
+                              _scanMessage = 'Scan the event QR to record your attendance.';
+                            });
+                          },
                           icon: const Icon(Icons.close),
                           label: const Text('Close Scanner'),
                         ),
@@ -3178,6 +3403,9 @@ class _StandaloneQrScannerScreen extends ConsumerStatefulWidget {
 class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScannerScreen> {
   @override
   Widget build(BuildContext context) {
+    final topPadding = MediaQuery.of(context).padding.top;
+    const appBarEstimate = kToolbarHeight;
+    final topOffset = topPadding + appBarEstimate + 16;
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -3188,12 +3416,21 @@ class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScanner
         elevation: 0,
         flexibleSpace: const _AppBarGradientBg(),
       ),
-      body: _TabBackground(
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-            child: StudentScannerTab(user: widget.user),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFFF1F4FF),
+              Color(0xFFF7F8FC),
+              Color(0xFFF6F7FB),
+            ],
           ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, topOffset, 16, 16),
+          child: StudentScannerTab(user: widget.user),
         ),
       ),
     );
@@ -3365,6 +3602,10 @@ class _TabBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final topPadding = MediaQuery.of(context).padding.top;
+    // kToolbarHeight = 56 (Material AppBar default) + kMinInteractiveDimension = 48 (TabBar default)
+    const appBarTabBarEstimate = kToolbarHeight + 48.0;
+    final topOffset = topPadding + appBarTabBarEstimate;
     return DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -3377,7 +3618,10 @@ class _TabBackground extends StatelessWidget {
           ],
         ),
       ),
-      child: child,
+      child: Padding(
+        padding: EdgeInsets.only(top: topOffset),
+        child: child,
+      ),
     );
   }
 }
