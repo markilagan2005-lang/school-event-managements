@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../main.dart' show MyApp;
+import '../main.dart' show MyApp, buildAppBackground, AppThemeAssets;
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart' show AuthService;
+
+enum StudentLoginMode { studentId, email }
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -15,38 +17,34 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _usernameController = TextEditingController();
+  final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _canSubmit = false;
   bool _obscurePassword = true;
+  StudentLoginMode _studentMode = StudentLoginMode.email;
 
   @override
   void initState() {
     super.initState();
-    _usernameController.addListener(_syncCanSubmit);
+    _identifierController.addListener(_syncCanSubmit);
     _passwordController.addListener(_syncCanSubmit);
     _syncCanSubmit();
   }
 
   void _syncCanSubmit() {
-    final next = _usernameController.text.trim().isNotEmpty && _passwordController.text.isNotEmpty;
+    final next = _identifierController.text.trim().isNotEmpty && _passwordController.text.isNotEmpty;
     if (next == _canSubmit) return;
     setState(() => _canSubmit = next);
   }
 
   bool _isStrongPassword(String password) {
-    // At least 8 characters long
-    // Contains at least one uppercase letter
-    // Contains at least one lowercase letter
-    // Contains at least one digit
-    // Contains at least one special character
     final strongPasswordRegex = RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*])(?=.{8,})');
     return strongPasswordRegex.hasMatch(password);
   }
 
   @override
   void dispose() {
-    _usernameController.dispose();
+    _identifierController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -57,208 +55,287 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final authNotifier = ref.read(authProvider.notifier);
 
     return Scaffold(
-      body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-          ),
-        ),
+      body: buildAppBackground(
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Container(
-                          width: 72,
-                          height: 72,
+                          width: 68,
+                          height: 68,
                           decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primaryContainer,
+                            color: Colors.white.withValues(alpha: 0.95),
                             borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Icon(
-                            Icons.school,
-                            size: 40,
-                            color: Theme.of(context).colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Attendify',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w800,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0x22000000),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
                               ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Sign in to continue',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Colors.black54,
-                              ),
-                        ),
-                        const SizedBox(height: 18),
-                        TextField(
-                          controller: _usernameController,
-                          textInputAction: TextInputAction.next,
-                          autofillHints: const [AutofillHints.username],
-                          decoration: const InputDecoration(
-                            labelText: 'Username',
-                            prefixIcon: Icon(Icons.person),
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          textInputAction: TextInputAction.done,
-                          autofillHints: const [AutofillHints.password],
-                          decoration: InputDecoration(
-                            labelText: 'Password',
-                            prefixIcon: const Icon(Icons.lock),
-                            suffixIcon: IconButton(
-                              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-                              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                              icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                          child: Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Image.asset(
+                              AppThemeAssets.lccLogo,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => Icon(
+                                Icons.school,
+                                size: 40,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
                             ),
                           ),
-                          onSubmitted: authState.isLoading
-                              ? null
-                              : (_) async {
-                                  if (!_canSubmit) return;
-                                  final ctx = context;
-                                  final messenger = MyApp.scaffoldMessengerKey.currentState ??
-                                      ScaffoldMessenger.of(ctx);
-                                  Future<AuthActionResult> doLogin() => authNotifier.login(
-                                        _usernameController.text,
-                                        _passwordController.text,
-                                      );
-                                  AuthActionResult result = await doLogin();
-                                  if (!ctx.mounted) return;
-                                  if (result.succeeded) return;
-                                  if (result.isEmailVerificationRequired) {
-                                    // Try OTP verification. If user successfully verifies,
-                                    // AUTO-RE-ATTEMPT login immediately so they don't have to
-                                    // click Login again.
-                                    final closed = await _showOtpDialog(
-                                      ctx,
-                                      username: result.username ?? _usernameController.text.trim(),
-                                      email: result.email,
-                                      expiresInMs: result.expiresInMs,
-                                      emailSent: result.emailSent ?? false,
-                                    );
-                                    if (!ctx.mounted) return;
-                                    if (closed == true) {
-                                      messenger.showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Email verified! Signing you in…',
-                                          ),
-                                        ),
-                                      );
-                                      final retry = await doLogin();
-                                      if (!ctx.mounted) return;
-                                      if (retry.succeeded) return;
-                                      if (retry.errorMessage != null) {
-                                        messenger.showSnackBar(
-                                          SnackBar(content: Text(retry.errorMessage!)),
-                                        );
-                                      }
-                                    }
-                                    return;
-                                  }
-                                  final err = result.errorMessage;
-                                  if (err != null) {
-                                    messenger.showSnackBar(
-                                      SnackBar(content: Text(err)),
-                                    );
-                                  }
-                                },
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: (authState.isLoading || !_canSubmit)
-                              ? null
-                              : () async {
-                                  final ctx = context;
-                                  final messenger = MyApp.scaffoldMessengerKey.currentState ??
-                                      ScaffoldMessenger.of(ctx);
-                                  Future<AuthActionResult> doLogin() => authNotifier.login(
-                                        _usernameController.text,
-                                        _passwordController.text,
-                                      );
-                                  AuthActionResult result = await doLogin();
-                                  if (!ctx.mounted) return;
-                                  if (result.succeeded) return;
-                                  if (result.isEmailVerificationRequired) {
-                                    final closed = await _showOtpDialog(
-                                      ctx,
-                                      username: result.username ?? _usernameController.text.trim(),
-                                      email: result.email,
-                                      expiresInMs: result.expiresInMs,
-                                      emailSent: result.emailSent ?? false,
-                                    );
-                                    if (!ctx.mounted) return;
-                                    if (closed == true) {
-                                      messenger.showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Email verified! Signing you in…',
-                                          ),
-                                        ),
-                                      );
-                                      final retry = await doLogin();
-                                      if (!ctx.mounted) return;
-                                      if (retry.succeeded) return;
-                                      if (retry.errorMessage != null) {
-                                        messenger.showSnackBar(
-                                          SnackBar(content: Text(retry.errorMessage!)),
-                                        );
-                                      }
-                                    }
-                                    return;
-                                  }
-                                  final err = result.errorMessage;
-                                  if (err != null) {
-                                    messenger.showSnackBar(
-                                      SnackBar(content: Text(err)),
-                                    );
-                                  }
-                                },
-                          child: authState.isLoading
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                )
-                              : const Text('Login'),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Text('No account?'),
-                            TextButton(
-                              onPressed: () => _showRegisterDialog(context, authNotifier),
-                              child: const Text('Create Account'),
-                            ),
-                          ],
-                        ),
-                        TextButton(
-                          onPressed: authState.isLoading ? null : () => _showResetPasswordDialog(context),
-                          child: const Text('Reset Password'),
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                    ShaderMask(
+                      blendMode: BlendMode.srcIn,
+                      shaderCallback: (bounds) => const LinearGradient(
+                        colors: [Colors.white, Color(0xFFBFDBFE)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ).createShader(bounds),
+                      child: Text(
+                        'Attendify',
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.4,
+                              color: Colors.white,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Sign in to continue',
+                      style: TextStyle(color: Color(0xFFCFE0FF), fontSize: 15),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 22),
+                    Card(
+                      elevation: 8,
+                      shadowColor: const Color(0x33000000),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(22),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SegmentedButton<StudentLoginMode>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: StudentLoginMode.email,
+                                  label: Text('Email'),
+                                  icon: Icon(Icons.email_outlined, size: 18),
+                                ),
+                                ButtonSegment(
+                                  value: StudentLoginMode.studentId,
+                                  label: Text('Student ID'),
+                                  icon: Icon(Icons.badge_outlined, size: 18),
+                                ),
+                              ],
+                              selected: {_studentMode},
+                              onSelectionChanged: (set) {
+                                if (set.isEmpty) return;
+                                final next = set.first;
+                                final oldVal = _identifierController.text.trim();
+                                setState(() {
+                                  _studentMode = next;
+                                  if (next == StudentLoginMode.email &&
+                                      oldVal.isNotEmpty &&
+                                      !oldVal.contains('@')) {
+                                    _identifierController.clear();
+                                  }
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 18),
+                            AnimatedCrossFade(
+                              duration: const Duration(milliseconds: 220),
+                              firstChild: TextField(
+                                key: const ValueKey('email'),
+                                controller: _identifierController,
+                                keyboardType: TextInputType.emailAddress,
+                                autocorrect: false,
+                                textInputAction: TextInputAction.next,
+                                autofillHints: const [AutofillHints.email],
+                                decoration: const InputDecoration(
+                                  labelText: 'Gmail address',
+                                  prefixIcon: Icon(Icons.email_outlined),
+                                  helperText: 'Student ID also works — switch above.',
+                                ),
+                              ),
+                              secondChild: TextField(
+                                key: const ValueKey('studentId'),
+                                controller: _identifierController,
+                                textInputAction: TextInputAction.next,
+                                autofillHints: const [AutofillHints.username],
+                                decoration: const InputDecoration(
+                                  labelText: 'Student ID',
+                                  prefixIcon: Icon(Icons.badge_outlined),
+                                  helperText: 'Enter the Student ID on your school ID card.',
+                                ),
+                              ),
+                              crossFadeState: _studentMode == StudentLoginMode.email
+                                  ? CrossFadeState.showFirst
+                                  : CrossFadeState.showSecond,
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _passwordController,
+                              obscureText: _obscurePassword,
+                              textInputAction: TextInputAction.done,
+                              autofillHints: const [AutofillHints.password],
+                              decoration: InputDecoration(
+                                labelText: 'Password',
+                                prefixIcon: const Icon(Icons.lock_outline),
+                                suffixIcon: IconButton(
+                                  tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                                ),
+                              ),
+                              onSubmitted: authState.isLoading
+                                  ? null
+                                  : (_) async {
+                                      if (!_canSubmit) return;
+                                      final ctx = context;
+                                      final messenger = MyApp.scaffoldMessengerKey.currentState ??
+                                          ScaffoldMessenger.of(ctx);
+                                      Future<AuthActionResult> doLogin() => authNotifier.login(
+                                            _identifierController.text,
+                                            _passwordController.text,
+                                          );
+                                      AuthActionResult result = await doLogin();
+                                      if (!ctx.mounted) return;
+                                      if (result.succeeded) return;
+                                      if (result.isEmailVerificationRequired) {
+                                        final closed = await _showOtpDialog(
+                                          ctx,
+                                          username: result.username ?? _identifierController.text.trim(),
+                                          email: result.email,
+                                          expiresInMs: result.expiresInMs,
+                                          emailSent: result.emailSent ?? false,
+                                        );
+                                        if (!ctx.mounted) return;
+                                        if (closed == true) {
+                                          messenger.showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Email verified! Signing you in…',
+                                              ),
+                                            ),
+                                          );
+                                          final retry = await doLogin();
+                                          if (!ctx.mounted) return;
+                                          if (retry.succeeded) return;
+                                          if (retry.errorMessage != null) {
+                                            messenger.showSnackBar(
+                                              SnackBar(content: Text(retry.errorMessage!)),
+                                            );
+                                          }
+                                        }
+                                        return;
+                                      }
+                                      final err = result.errorMessage;
+                                      if (err != null) {
+                                        messenger.showSnackBar(
+                                          SnackBar(content: Text(err)),
+                                        );
+                                      }
+                                    },
+                            ),
+                            const SizedBox(height: 18),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: (authState.isLoading || !_canSubmit)
+                                    ? null
+                                    : () async {
+                                        final ctx = context;
+                                        final messenger = MyApp.scaffoldMessengerKey.currentState ??
+                                            ScaffoldMessenger.of(ctx);
+                                        Future<AuthActionResult> doLogin() => authNotifier.login(
+                                              _identifierController.text,
+                                              _passwordController.text,
+                                            );
+                                        AuthActionResult result = await doLogin();
+                                        if (!ctx.mounted) return;
+                                        if (result.succeeded) return;
+                                        if (result.isEmailVerificationRequired) {
+                                          final closed = await _showOtpDialog(
+                                            ctx,
+                                            username: result.username ?? _identifierController.text.trim(),
+                                            email: result.email,
+                                            expiresInMs: result.expiresInMs,
+                                            emailSent: result.emailSent ?? false,
+                                          );
+                                          if (!ctx.mounted) return;
+                                          if (closed == true) {
+                                            messenger.showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Email verified! Signing you in…',
+                                                ),
+                                              ),
+                                            );
+                                            final retry = await doLogin();
+                                            if (!ctx.mounted) return;
+                                            if (retry.succeeded) return;
+                                            if (retry.errorMessage != null) {
+                                              messenger.showSnackBar(
+                                                SnackBar(content: Text(retry.errorMessage!)),
+                                              );
+                                            }
+                                          }
+                                          return;
+                                        }
+                                        final err = result.errorMessage;
+                                        if (err != null) {
+                                          messenger.showSnackBar(
+                                            SnackBar(content: Text(err)),
+                                          );
+                                        }
+                                      },
+                                child: authState.isLoading
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                      )
+                                    : const Text('Sign in'),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Text('No account?'),
+                                TextButton(
+                                  onPressed: () => _showRegisterDialog(context, authNotifier),
+                                  child: const Text('Create Account'),
+                                ),
+                              ],
+                            ),
+                            TextButton(
+                              onPressed: authState.isLoading ? null : () => _showResetPasswordDialog(context),
+                              child: const Text('Reset Password'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -271,11 +348,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void _showRegisterDialog(BuildContext context, AuthNotifier notifier) {
     String role = 'student';
     bool obscureRegisterPassword = true;
-    final usernameController = TextEditingController(text: _usernameController.text);
+    final usernameController = TextEditingController(text: _identifierController.text);
     final passwordController = TextEditingController(text: _passwordController.text);
     final fullNameController = TextEditingController();
     final studentIdController = TextEditingController();
-    final emailController = TextEditingController(text: _usernameController.text.trim());
+    final emailController = TextEditingController(text: _identifierController.text.trim());
     final otpController = TextEditingController();
     const courses = [
       'Bachelor of Science in Criminology',
@@ -1290,7 +1367,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _showResetPasswordDialog(BuildContext context) async {
-    final usernameController = TextEditingController(text: _usernameController.text.trim());
+    final usernameController = TextEditingController(text: _identifierController.text.trim());
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
     bool obscureNew = true;

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
+import '../main.dart' show AppThemeAssets, AppColors;
 import '../providers/auth_provider.dart';
 import '../services/event_provider.dart';
 import '../services/attendance_provider.dart';
@@ -62,87 +63,105 @@ class _AppDrawer extends StatelessWidget {
     return Drawer(
       width: 280,
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                      foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
-                      child: Text(initials.isEmpty ? 'U' : initials, style: const TextStyle(fontWeight: FontWeight.w800)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user.fullName.isEmpty ? user.username : user.fullName,
-                            style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                          Text(
-                            '${user.role.toUpperCase()} • ${user.username}',
-                            style: textTheme.bodySmall?.copyWith(color: Colors.black54),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+        top: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 36, 16, 20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.primaryStart, Color(0xFF2563eb), AppColors.primaryEnd],
                 ),
+                borderRadius: BorderRadius.only(bottomRight: Radius.circular(28)),
               ),
-              const Divider(height: 8),
-              if (user.role == 'student') ...[
-                ListTile(
-                  leading: const Icon(Icons.qr_code_scanner_outlined),
-                  title: const Text('Scan QR', style: TextStyle(fontWeight: FontWeight.w700)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _openStandaloneScanner(context, user);
-                  },
-                ),
-              ],
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 26,
+                    backgroundColor: Colors.white.withValues(alpha: 0.18),
+                    foregroundColor: Colors.white,
+                    child: Text(
+                      initials.isEmpty ? 'U' : initials,
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user.fullName.isEmpty ? user.username : user.fullName,
+                          style: textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                                letterSpacing: 0.2,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${user.role.toUpperCase()} • ${(user.studentId.isNotEmpty && user.role == 'student') ? user.studentId : user.username}',
+                          style: textTheme.bodySmall?.copyWith(
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            if (user.role == 'student')
               ListTile(
-                leading: const Icon(Icons.settings_outlined),
-                title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w700)),
+                leading: const Icon(Icons.qr_code_scanner_outlined),
+                title: const Text('Scan QR', style: TextStyle(fontWeight: FontWeight.w700)),
                 onTap: () {
                   Navigator.pop(context);
-                  _openSettingsSheet(context, ref, user);
+                  _openStandaloneScanner(context, user);
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.menu_book_outlined),
-                title: const Text('Instructions'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showInstructionsDialog(context, user);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('About Us'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showAboutUsDialog(context);
-                },
-              ),
-              const Spacer(),
-              const Divider(height: 8),
-              ListTile(
-                leading: const Icon(Icons.logout, color: Color(0xFFB3261E)),
-                title: const Text('Logout', style: TextStyle(color: Color(0xFFB3261E), fontWeight: FontWeight.w700)),
-                onTap: () {
-                  Navigator.pop(context);
-                  ref.read(authProvider.notifier).logout();
-                },
-              ),
-            ],
-          ),
+            ListTile(
+              leading: const Icon(Icons.settings_outlined),
+              title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(context);
+                _openSettingsSheet(context, ref, user);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('Instructions'),
+              onTap: () {
+                Navigator.pop(context);
+                _showInstructionsDialog(context, user);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('About Us'),
+              onTap: () {
+                Navigator.pop(context);
+                _showAboutUsDialog(context);
+              },
+            ),
+            const Spacer(),
+            const Divider(height: 8),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Color(0xFFB3261E)),
+              title: const Text('Logout',
+                  style: TextStyle(color: Color(0xFFB3261E), fontWeight: FontWeight.w700)),
+              onTap: () {
+                Navigator.pop(context);
+                ref.read(authProvider.notifier).logout();
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -394,6 +413,7 @@ class AdminHomeScreen extends ConsumerWidget {
       length: 4,
       child: Scaffold(
         drawer: _AppDrawer(user: user, ref: ref),
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -405,12 +425,14 @@ class AdminHomeScreen extends ConsumerWidget {
               ),
             ],
           ),
-          backgroundColor: Theme.of(context).colorScheme.primary,
+          backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
-          surfaceTintColor: Theme.of(context).colorScheme.primary,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
           actions: const [
             SizedBox(width: 8),
           ],
+          flexibleSpace: const _AppBarGradientBg(),
           bottom: const TabBar(
             indicatorColor: Colors.white,
             labelColor: Colors.white,
@@ -449,23 +471,26 @@ class StudentHomeScreen extends ConsumerWidget {
       length: 3,
       child: Scaffold(
         drawer: _AppDrawer(user: user, ref: ref),
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text('Student'),
               Text(
-                user.username,
+                user.studentId.isNotEmpty ? user.studentId : user.username,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
               ),
             ],
           ),
-          backgroundColor: Theme.of(context).colorScheme.primary,
+          backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
-          surfaceTintColor: Theme.of(context).colorScheme.primary,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
           actions: const [
             SizedBox(width: 8),
           ],
+          flexibleSpace: const _AppBarGradientBg(),
           bottom: const TabBar(
             indicatorColor: Colors.white,
             labelColor: Colors.white,
@@ -502,6 +527,7 @@ class FacultyHomeScreen extends ConsumerWidget {
       length: 2,
       child: Scaffold(
         drawer: _AppDrawer(user: user, ref: ref),
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -513,12 +539,14 @@ class FacultyHomeScreen extends ConsumerWidget {
               ),
             ],
           ),
-          backgroundColor: Theme.of(context).colorScheme.primary,
+          backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
-          surfaceTintColor: Theme.of(context).colorScheme.primary,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
           actions: const [
             SizedBox(width: 8),
           ],
+          flexibleSpace: const _AppBarGradientBg(),
           bottom: const TabBar(
             indicatorColor: Colors.white,
             labelColor: Colors.white,
@@ -550,8 +578,14 @@ class FacultyPendingApprovalScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Faculty Verification'),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: const _AppBarGradientBg(),
       ),
       body: Center(
         child: Padding(
@@ -2670,11 +2704,14 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
     final poster = _posterImage();
     final textTheme = Theme.of(context).textTheme;
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Text(widget.event.name),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
-        surfaceTintColor: Theme.of(context).colorScheme.primary,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: const _AppBarGradientBg(),
       ),
       body: _TabBackground(
         child: ListView(
@@ -3058,11 +3095,14 @@ class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScanner
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Scan QR'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
-        surfaceTintColor: Theme.of(context).colorScheme.primary,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: const _AppBarGradientBg(),
       ),
       body: _TabBackground(
         child: SafeArea(
@@ -3254,6 +3294,35 @@ class _TabBackground extends StatelessWidget {
         ),
       ),
       child: child,
+    );
+  }
+}
+
+class _AppBarGradientBg extends StatelessWidget {
+  const _AppBarGradientBg();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.primaryStart, Color(0xFF1d4ed8), AppColors.primaryEnd],
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: Image.asset(
+            AppThemeAssets.bgImage,
+            fit: BoxFit.cover,
+            opacity: const AlwaysStoppedAnimation(0.22),
+          ),
+        ),
+      ],
     );
   }
 }

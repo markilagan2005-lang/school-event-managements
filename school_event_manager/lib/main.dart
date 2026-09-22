@@ -5,6 +5,54 @@ import 'providers/auth_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 
+class AppThemeAssets {
+  static const String bgImage = 'assets/images/bg.png';
+  static const String lccLogo = 'assets/images/lcc_logo.png';
+  static const String lccIcon = 'assets/images/lcc.png';
+}
+
+class AppColors {
+  static const primaryStart = Color(0xFF1e3a8a);
+  static const primaryEnd = Color(0xFF3b82f6);
+  static const overlayStart = Color(0xCC0f172a);
+  static const overlayEnd = Color(0x991e3a8a);
+}
+
+Widget buildAppBackground({required Widget child, double blur = 0}) {
+  return Stack(
+    fit: StackFit.expand,
+    children: [
+      Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [AppColors.primaryStart, Color(0xFF0b1e4d), Color(0xFF061236)],
+          ),
+        ),
+      ),
+      Image.asset(
+        AppThemeAssets.bgImage,
+        fit: BoxFit.cover,
+        opacity: const AlwaysStoppedAnimation(0.18),
+      ),
+      Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              AppColors.overlayStart,
+              AppColors.overlayEnd,
+            ],
+          ),
+        ),
+      ),
+      child,
+    ],
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await DataService.init();
@@ -31,11 +79,12 @@ class MyApp extends ConsumerWidget {
     );
 
     return MaterialApp(
-      title: 'School Event Management',
+      title: 'Attendify',
       scaffoldMessengerKey: scaffoldMessengerKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF667eea),
+          seedColor: const Color(0xFF3b82f6),
+          primary: const Color(0xFF3b82f6),
           brightness: Brightness.light,
         ),
         fontFamily: 'Roboto',
@@ -86,7 +135,7 @@ class MyApp extends ConsumerWidget {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0xFF667eea), width: 1.5),
+            borderSide: const BorderSide(color: Color(0xFF3b82f6), width: 1.5),
           ),
           labelStyle: const TextStyle(
             color: Color(0xFF667085),
@@ -105,6 +154,8 @@ class MyApp extends ConsumerWidget {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
+            foregroundColor: Colors.white,
+            backgroundColor: const Color(0xFF3b82f6),
             minimumSize: const Size.fromHeight(52),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
@@ -112,12 +163,14 @@ class MyApp extends ConsumerWidget {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF1e3a8a),
+            side: const BorderSide(color: Color(0xFF3b82f6)),
             minimumSize: const Size.fromHeight(48),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
         ),
         chipTheme: ChipThemeData.fromDefaults(
-          secondaryColor: const Color(0xFFEDF2FF),
+          secondaryColor: const Color(0xFFDBEAFE),
           brightness: Brightness.light,
           labelStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),

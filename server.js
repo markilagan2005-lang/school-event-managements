@@ -699,6 +699,7 @@ const findUserByHandle = (users, handle) => {
   return (
     users.find(u => String(u.username || '').toLowerCase() === h) ||
     users.find(u => u && u.email && String(u.email).toLowerCase() === h) ||
+    users.find(u => u && u.studentId && String(u.studentId).toLowerCase() === h) ||
     null
   );
 };
@@ -991,7 +992,7 @@ app.post('/api/login', async (req, res) => {
     user = findUserByHandle(users, username);
   }
 
-  if (!user) return res.status(401).json({ error: 'Email or username not found' });
+  if (!user) return res.status(401).json({ error: 'Student ID, email, or username not found' });
   if (user.isVerified !== true) {
     // For STUDENT accounts: keep email-verification gate open. Try to auto-generate
     // a fresh OTP + auto-send if (a) none is pending or (b) previous one expired, so the
