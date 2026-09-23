@@ -128,8 +128,7 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           allCourses: allCourses,
           courses: courses,
         );
-        await DataService.deleteEvent(id);
-        await DataService.addEvent(next);
+        await DataService.updateEvent(next);
         await loadEvents();
         return next;
       } else {

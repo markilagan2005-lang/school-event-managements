@@ -87,6 +87,22 @@ class DataService {
     await box.add(jsonEncode(event.toJson()));
   }
 
+  static Future<void> updateEvent(Event event) async {
+    final box = _eventsBox!;
+    for (final key in box.keys) {
+      final value = box.get(key);
+      if (value == null) continue;
+      final json = jsonDecode(value) as Map<String, dynamic>;
+      final existing = Event.fromJson(json);
+      if (existing.id == event.id) {
+        await box.put(key, jsonEncode(event.toJson()));
+        return;
+      }
+    }
+    // Not found — fall back to insert (preserves same behavior as add, same id)
+    await addEvent(event);
+  }
+
   static Future<void> deleteEvent(String id) async {
     final box = _eventsBox!;
     for (final key in box.keys) {

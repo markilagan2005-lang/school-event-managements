@@ -1205,14 +1205,51 @@ const parseEventRequestPayload = (body, existing = null) => {
   let nextParentId = parentId;
   if (nextParentId === undefined && existing) nextParentId = existing.parentId ?? null;
   if (typeof nextParentId !== 'string' || !nextParentId) nextParentId = null;
-  let nextAllCourses = allCourses;
-  if (nextAllCourses == null && existing) nextAllCourses = existing.allCourses;
-  if (nextAllCourses !== true && nextAllCourses !== false) nextAllCourses = true;
+
+  // allCourses coercion: accept strict boolean, or "true"/"false"/1/0 string/number
+  // from older clients or form submissions.
+  const allCoursesExplicitInRequest = allCourses !== undefined && allCourses !== null;
+  const coursesExplicitInRequest = courses !== undefined && courses !== null;
+  let nextAllCourses;
+  if (allCoursesExplicitInRequest) {
+    const v = allCourses;
+    if (typeof v === 'boolean') nextAllCourses = v;
+    else if (typeof v === 'string') nextAllCourses = v.trim().toLowerCase() === 'true' || v.trim() === '1';
+    else if (typeof v === 'number') nextAllCourses = v !== 0;
+    else nextAllCourses = Boolean(v);
+  } else if (existing && existing.allCourses !== undefined && existing.allCourses !== null) {
+    nextAllCourses = Boolean(existing.allCourses);
+  }
+  // Defensive: if the admin explicitly sent a non-empty courses array but did NOT
+  // explicitly set allCourses=true, we treat the selection as "specific courses"
+  // to avoid silently forcing every student to see an event the admin clearly meant
+  // to restrict.
+  if (nextAllCourses === undefined || nextAllCourses === null) {
+    if (coursesExplicitInRequest && Array.isArray(courses) && courses.length > 0) {
+      nextAllCourses = false;
+    } else {
+      nextAllCourses = true;
+    }
+  }
+
   let nextCourses;
-  if (courses === undefined && existing) nextCourses = existing.courses;
-  if (!nextCourses) nextCourses = courses;
+  if (coursesExplicitInRequest) nextCourses = courses;
+  if (!nextCourses && existing) nextCourses = existing.courses;
   nextCourses = normalizeCourses(nextCourses);
-  if (nextAllCourses === true) nextCourses = [...ALL_COURSES];
+
+  // Final resolution:
+  // - If nextAllCourses is TRUE: always populate courses with the full canonical list.
+  //   This guarantees client rendering of "All Courses" chips and any direct DB reader
+  //   see a consistent courses array even if the request accidentally included a
+  //   partial one.
+  // - If nextAllCourses is FALSE: never overwrite nextCourses with ALL_COURSES.
+  //   Use whatever the admin actually selected (possibly empty — route-level validation
+  //   below will catch empty-as-an-error and return a 400).
+  if (nextAllCourses === true) {
+    nextCourses = [...ALL_COURSES];
+  } else if (!Array.isArray(nextCourses) || nextCourses.length === 0) {
+    nextCourses = normalizeCourses(courses);
+  }
   return {
     name: cleanName,
     date: cleanDate,
@@ -1233,6 +1270,11 @@ app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
   const events = loadData(eventsFile).map((e) => eventApplyDefaults(e));
   const parsed = parseEventRequestPayload(req.body);
   if (!parsed.name || !parsed.date) return res.status(400).json({ error: 'Invalid payload' });
+  if (parsed.allCourses === false && (!Array.isArray(parsed.courses) || parsed.courses.length === 0)) {
+    return res.status(400).json({
+      error: 'At least one course is required when "All Courses" is disabled.',
+    });
+  }
   if (req.body && typeof req.body.posterImageUrl === 'string' && req.body.posterImageUrl.trim().length > MAX_POSTER_CHARS) {
     return res.status(413).json({
       error: 'Poster image too large',
@@ -1280,6 +1322,11 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
     });
   }
   const merged = parseEventRequestPayload(req.body, events[idx]);
+  if (merged.allCourses === false && (!Array.isArray(merged.courses) || merged.courses.length === 0)) {
+    return res.status(400).json({
+      error: 'At least one course is required when "All Courses" is disabled.',
+    });
+  }
   if (merged.parentId && merged.parentId === events[idx].id) {
     return res.status(400).json({ error: 'An event cannot be its own parent' });
   }
@@ -1294,7 +1341,14 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
     if (hasChildren) return res.status(400).json({ error: 'Remove sub-events first before changing this category into a regular event' });
   }
   events[idx] = { ...events[idx], ...merged, id: events[idx].id, attendees: events[idx].attendees ?? [] };
-  eventApplyDefaults(events[idx]);
+  // eventApplyDefaults on update: only populate fields that are still missing (never
+  // override an explicit allCourses=false or courses=[] that we intentionally saved
+  // through parseEventRequestPayload above).
+  if (events[idx].allCourses !== true && events[idx].allCourses !== false) events[idx].allCourses = true;
+  if (!Array.isArray(events[idx].courses)) events[idx].courses = [...ALL_COURSES];
+  if (events[idx].isCategory !== true && events[idx].isCategory !== false) events[idx].isCategory = false;
+  if (events[idx].parentId !== null && (typeof events[idx].parentId !== 'string' || !events[idx].parentId)) events[idx].parentId = null;
+  if (typeof events[idx].location !== 'string') events[idx].location = '';
   saveData(eventsFile, events);
   res.json(events[idx]);
 });
@@ -1642,25 +1696,45 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
     next.password = await hashPassword(String(password));
   }
   if (isApproved != null) {
-    if (next.role !== 'faculty' && Boolean(isApproved) == false) {
+    if ((next.role || current.role) !== 'faculty' && Boolean(isApproved) == false) {
       return res.status(400).json({ error: 'Only faculty can be unapproved' });
     }
     next.isApproved = Boolean(isApproved);
-    if (next.role === 'faculty' && next.isApproved === true) {
+    const effRole = (next.role || current.role || '').toLowerCase();
+    if (effRole === 'faculty' && next.isApproved === true) {
       // When admin approves a faculty account, the account is also considered verified
       // so the login no longer hits the isVerified gate (which, for faculty, is a
       // de-facto approval-required state set during registration).
       next.isVerified = true;
     }
-    if (next.role === 'faculty' && next.isApproved === false) {
+    if (effRole === 'faculty' && next.isApproved === false) {
       next.isVerified = false;
     }
   }
-  if (next.role === 'faculty' && next.isApproved == null) {
+  if ((next.role || current.role) === 'faculty' && next.isApproved == null) {
     next.isApproved = isFacultyApproved(current);
   }
-  if (next.role !== 'faculty') {
+  if ((next.role || current.role) !== 'faculty') {
     next.isApproved = true;
+    next.isVerified = true;
+  }
+
+  // FINAL CONSISTENCY SYNC (most important for already-approved faculty stuck pending):
+  // - For FACULTY: isApproved and isVerified must always match (both true or both false).
+  //   This catches every entry path: standalone "Approve faculty" menu, Edit User dialog,
+  //   role changes, plus the backward-compat migration on startup. If a faculty record
+  //   ends up in any inconsistent state (e.g., created before approval logic updated,
+  //   or approved via Approve button but isVerified somehow never flipped), we force
+  //   alignment here so the /api/login isVerified gate cannot permanently lock a valid
+  //   approved faculty out of the app.
+  const finalRole = String(next.role || current.role || '').toLowerCase();
+  if (finalRole === 'faculty') {
+    if (next.isApproved === true) next.isVerified = true;
+    if (next.isApproved === false) next.isVerified = false;
+    if (next.isVerified === true && next.isApproved !== true) next.isApproved = true;
+    if (next.isVerified === false && next.isApproved !== false) next.isApproved = false;
+  } else {
+    next.isVerified = true;
   }
 
   if (hasDuplicateStudentId(users, next.studentId, current.id)) {

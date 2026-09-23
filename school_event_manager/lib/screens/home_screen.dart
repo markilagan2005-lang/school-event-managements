@@ -525,7 +525,7 @@ class _AdminEventsFab extends StatelessWidget {
             child: FloatingActionButton.extended(
               heroTag: 'admin_add_event_fab',
               elevation: 6,
-              onPressed: showFab ? () => _showAddEventDialog(ctx, ref) : null,
+              onPressed: showFab ? () => _showEventDialog(ctx, ref) : null,
               backgroundColor: AppColors.primaryStart,
               foregroundColor: Colors.white,
               icon: const Icon(Icons.add),
@@ -838,10 +838,9 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Expanded(
+                      const Expanded(
                         child: Text(
-                          'After adding an event, show the Event QR to students for scanning.',
-                          style: Theme.of(context).textTheme.bodyMedium,
+                          'Tap any event to edit it. After editing, changes are instantly visible to students.',
                         ),
                       ),
                     ],
@@ -868,99 +867,97 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                           final shownCodes = courseCodes.take(3).toList();
                           final remainingCourses = courseCodes.length - shownCodes.length;
                           return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                              child: ListTile(
-                                leading: Container(
-                                  width: 44,
-                                  height: 44,
-                                  decoration: BoxDecoration(
-                                    color: scheme.secondaryContainer,
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  child: Icon(
-                                    Icons.event,
-                                    color: scheme.onSecondaryContainer,
-                                  ),
-                                ),
-                                title: Text(event.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      [
-                                        '${event.date.toLocal()}'.split(' ')[0],
-                                        event.status.toUpperCase(),
-                                        if (event.startAt != null && event.endAt != null)
-                                          '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
-                                      ].join(' • '),
-                                      style: const TextStyle(color: Colors.black54),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () => _showEventDialog(context, ref, existing: event),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                child: ListTile(
+                                  leading: Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: scheme.secondaryContainer,
+                                      borderRadius: BorderRadius.circular(14),
                                     ),
-                                    const SizedBox(height: 6),
-                                    Wrap(
-                                      spacing: 4,
-                                      runSpacing: 4,
-                                      children: [
-                                        if (event.isCategory)
-                                          FilterChip(
-                                            visualDensity: VisualDensity.compact,
-                                            avatar: Icon(Icons.layers, size: 14, color: scheme.primary),
-                                            label: const Text('Category', style: TextStyle(fontSize: 11)),
-                                            onSelected: null,
-                                          )
-                                        else if (event.parentId != null)
-                                          FilterChip(
-                                            visualDensity: VisualDensity.compact,
-                                            avatar: Icon(Icons.folder_outlined, size: 14, color: scheme.tertiary),
-                                            label: const Text('Sub-event', style: TextStyle(fontSize: 11)),
-                                            onSelected: null,
-                                          ),
-                                        if (event.location.trim().isNotEmpty)
-                                          Chip(
-                                            visualDensity: VisualDensity.compact,
-                                            avatar: Icon(Icons.place_outlined, size: 14, color: scheme.tertiary),
-                                            label: Text(event.location.trim(), style: const TextStyle(fontSize: 11)),
-                                          ),
-                                        if (event.allCourses)
-                                          Chip(
-                                            visualDensity: VisualDensity.compact,
-                                            label: const Text('All Courses', style: TextStyle(fontSize: 11)),
-                                            backgroundColor: Colors.green.shade100,
-                                          )
-                                        else ...[
-                                          ...shownCodes.map((c) => Chip(
-                                                visualDensity: VisualDensity.compact,
-                                                label: Text(c, style: const TextStyle(fontSize: 11)),
-                                              )),
-                                          if (remainingCourses > 0)
+                                    child: Icon(
+                                      event.isCategory ? Icons.layers : Icons.event,
+                                      color: scheme.onSecondaryContainer,
+                                    ),
+                                  ),
+                                  title: Text(event.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        [
+                                          '${event.date.toLocal()}'.split(' ')[0],
+                                          event.status.toUpperCase(),
+                                          if (event.startAt != null && event.endAt != null)
+                                            '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
+                                        ].join(' • '),
+                                        style: const TextStyle(color: Colors.black54),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 4,
+                                        runSpacing: 4,
+                                        children: [
+                                          if (event.isCategory)
+                                            FilterChip(
+                                              visualDensity: VisualDensity.compact,
+                                              avatar: Icon(Icons.layers, size: 14, color: scheme.primary),
+                                              label: const Text('Category', style: TextStyle(fontSize: 11)),
+                                              onSelected: null,
+                                            )
+                                          else if (event.parentId != null)
+                                            FilterChip(
+                                              visualDensity: VisualDensity.compact,
+                                              avatar: Icon(Icons.folder_outlined, size: 14, color: scheme.tertiary),
+                                              label: const Text('Sub-event', style: TextStyle(fontSize: 11)),
+                                              onSelected: null,
+                                            ),
+                                          if (event.allCourses)
                                             Chip(
                                               visualDensity: VisualDensity.compact,
-                                              label: Text('+$remainingCourses more', style: const TextStyle(fontSize: 11)),
-                                            ),
+                                              label: const Text('All Courses', style: TextStyle(fontSize: 11)),
+                                              backgroundColor: Colors.green.shade100,
+                                            )
+                                          else ...[
+                                            ...shownCodes.map((c) => Chip(
+                                                  visualDensity: VisualDensity.compact,
+                                                  label: Text(c, style: const TextStyle(fontSize: 11)),
+                                                )),
+                                            if (remainingCourses > 0)
+                                              Chip(
+                                                visualDensity: VisualDensity.compact,
+                                                label: Text('+$remainingCourses more', style: const TextStyle(fontSize: 11)),
+                                              ),
+                                          ],
                                         ],
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: Icon(event.status == 'open' ? Icons.lock_open : Icons.lock),
-                                      onPressed: () async {
-                                        final next = event.status == 'open' ? 'closed' : 'open';
-                                        await ref.read(eventProvider.notifier).updateEvent(event.id, status: next, startAt: event.startAt, endAt: event.endAt);
-                                      },
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.qr_code),
-                                      onPressed: () => _showEventQr(context, event),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_outline),
-                                      onPressed: () => ref.read(eventProvider.notifier).deleteEvent(event.id),
-                                    ),
-                                  ],
+                                      ),
+                                    ],
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(event.status == 'open' ? Icons.lock_open : Icons.lock),
+                                        onPressed: () async {
+                                          final next = event.status == 'open' ? 'closed' : 'open';
+                                          await ref.read(eventProvider.notifier).updateEvent(event.id, status: next, startAt: event.startAt, endAt: event.endAt);
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.qr_code),
+                                        onPressed: () => _showEventQr(context, event),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline),
+                                        onPressed: () => ref.read(eventProvider.notifier).deleteEvent(event.id),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -976,31 +973,45 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
   }
 }
 
-Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
-  final nameController = TextEditingController();
-  final descriptionController = TextEditingController();
-  final locationController = TextEditingController();
-  DateTime date = DateTime.now();
-  String status = 'open';
-  bool enableWindow = false;
-  TimeOfDay startTime = const TimeOfDay(hour: 8, minute: 0);
-  TimeOfDay endTime = const TimeOfDay(hour: 17, minute: 0);
+Future<void> _showEventDialog(
+  BuildContext context,
+  WidgetRef ref, {
+  Event? existing,
+}) async {
+  final isEdit = existing != null;
+  final nameController = TextEditingController(text: existing?.name ?? '');
+  final descriptionController = TextEditingController(text: existing?.description ?? '');
+  DateTime date = existing?.date ?? DateTime.now();
+  String status = existing?.status ?? 'open';
+  bool enableWindow = (existing?.startAt != null) && (existing?.endAt != null);
+  TimeOfDay startTime = existing?.startAt != null
+      ? TimeOfDay.fromDateTime(existing!.startAt!)
+      : const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay endTime = existing?.endAt != null
+      ? TimeOfDay.fromDateTime(existing!.endAt!)
+      : const TimeOfDay(hour: 17, minute: 0);
   Uint8List? pickedBytes;
-  String posterDataUrl = '';
+  String posterDataUrl = existing?.posterImageUrl ?? '';
   bool busyPicking = false;
-  String? parentId;
-  bool isCategory = false;
-  bool allCourses = true;
-  Set<String> pickedCourses = {};
+  bool allCourses = existing?.allCourses ?? true;
+  Set<String> pickedCourses = allCourses
+      ? <String>{}
+      : (existing?.courses ?? <String>[]).toSet();
   final scrollController = ScrollController();
   final imagePicker = ImagePicker();
-  final allEvents = ref.read(eventProvider).valueOrNull ?? [];
-  final parentCategories = allEvents.where((e) => e.isCategory == true).toList();
+  if (posterDataUrl.trim().isNotEmpty && posterDataUrl.startsWith('data:')) {
+    try {
+      final comma = posterDataUrl.indexOf(',');
+      if (comma != -1) {
+        pickedBytes = base64Decode(posterDataUrl.substring(comma + 1));
+      }
+    } catch (_) {}
+  }
   await showDialog<void>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: const Text('Add Event'),
+        title: Text(isEdit ? 'Edit Event' : 'Add Event'),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 720),
           child: SingleChildScrollView(
@@ -1032,7 +1043,7 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
                       padding: EdgeInsets.only(bottom: 88),
                       child: Icon(Icons.notes),
                     ),
-                    hintText: 'Write event details, venue, required attire, etc. (max 5000 chars)',
+                    hintText: 'Write event details, required attire, etc. (max 5000 chars)',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -1172,12 +1183,13 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
+                  key: ValueKey('event_status_${existing?.id ?? 'new'}'),
                   initialValue: status,
                   decoration: const InputDecoration(labelText: 'Status'),
                   items: const [
+                    DropdownMenuItem(value: 'draft', child: Text('Draft')),
                     DropdownMenuItem(value: 'open', child: Text('Open')),
                     DropdownMenuItem(value: 'closed', child: Text('Closed')),
-                    DropdownMenuItem(value: 'draft', child: Text('Draft')),
                   ],
                   onChanged: (value) {
                     if (value == null) return;
@@ -1218,48 +1230,6 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
                   ),
                 ],
                 const SizedBox(height: 12),
-                TextField(
-                  controller: locationController,
-                  decoration: const InputDecoration(
-                    labelText: 'Location',
-                    prefixIcon: Icon(Icons.location_on_outlined),
-                  ),
-                  textInputAction: TextInputAction.next,
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Event Category / Main event'),
-                  subtitle: isCategory
-                      ? const Text('This event will be shown as a group/menu containing sub-events')
-                      : null,
-                  value: isCategory,
-                  onChanged: (v) => setState(() => isCategory = v),
-                ),
-                if (!isCategory) ...[
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String?>(
-                    key: ValueKey(parentId ?? '__none__'),
-                    initialValue: parentId,
-                    decoration: const InputDecoration(
-                      labelText: 'Parent category (optional: make this a sub-event)',
-                    ),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('(None / Standalone event)'),
-                      ),
-                      ...parentCategories.map((e) => DropdownMenuItem<String?>(
-                            value: e.id,
-                            child: Text(e.name),
-                          )),
-                    ],
-                    onChanged: (value) {
-                      setState(() => parentId = value);
-                    },
-                  ),
-                ],
-                const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('All Courses (visible to every student)'),
@@ -1320,13 +1290,33 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
         actions: [
           TextButton(onPressed: () {
             Navigator.pop(context);
-            locationController.dispose();
+            nameController.dispose();
+            descriptionController.dispose();
           }, child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
               try {
                 final name = nameController.text.trim();
-                if (name.isEmpty) return;
+                if (name.isEmpty) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Event name is required')),
+                    );
+                  }
+                  return;
+                }
+                if (!allCourses && pickedCourses.isEmpty) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Pick at least one course, or enable "All Courses".'),
+                        backgroundColor: Colors.deepOrangeAccent,
+                        duration: Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                  return;
+                }
                 final prefs = await SharedPreferences.getInstance();
                 final token = prefs.getString('auth_token');
                 if (token == null) {
@@ -1343,30 +1333,53 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
                   startAt = DateTime(date.year, date.month, date.day, startTime.hour, startTime.minute);
                   endAtDt = DateTime(date.year, date.month, date.day, endTime.hour, endTime.minute);
                 }
-                final created = await ref.read(eventProvider.notifier).addEvent(
-                      name,
-                      date,
-                      status: status,
-                      startAt: startAt,
-                      endAt: endAtDt,
-                      description: descriptionController.text.trim(),
-                      posterImageUrl: posterDataUrl,
-                      location: locationController.text.trim(),
-                      isCategory: isCategory,
-                      parentId: parentId,
-                      allCourses: allCourses,
-                      courses: allCourses ? const [] : pickedCourses.toList(),
+                final notifier = ref.read(eventProvider.notifier);
+                if (isEdit) {
+                  final updated = await notifier.updateEvent(
+                    existing.id,
+                    name: name,
+                    date: date,
+                    status: status,
+                    startAt: startAt,
+                    endAt: endAtDt,
+                    description: descriptionController.text.trim(),
+                    posterImageUrl: posterDataUrl,
+                    allCourses: allCourses,
+                    courses: allCourses ? const [] : pickedCourses.toList(),
+                  );
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                  if (updated != null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Event updated — changes now visible to students.'),
+                        duration: Duration(seconds: 3),
+                      ),
                     );
-                if (!context.mounted) return;
-                Navigator.pop(context);
-                if (created != null) {
-                  await _showEventQr(context, created);
+                  }
+                } else {
+                  final created = await notifier.addEvent(
+                    name,
+                    date,
+                    status: status,
+                    startAt: startAt,
+                    endAt: endAtDt,
+                    description: descriptionController.text.trim(),
+                    posterImageUrl: posterDataUrl,
+                    allCourses: allCourses,
+                    courses: allCourses ? const [] : pickedCourses.toList(),
+                  );
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                  if (created != null) {
+                    await _showEventQr(context, created);
+                  }
                 }
               } finally {
-                locationController.dispose();
+                // Disposed on Cancel path above; no-op here to avoid double-dispose.
               }
             },
-            child: const Text('Add'),
+            child: Text(isEdit ? 'Save Changes' : 'Add'),
           ),
         ],
       ),
@@ -2354,6 +2367,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
     final sectionController = TextEditingController(text: user.section);
     String role = user.role;
     bool obscurePassword = true;
+    bool isApproved = user.isApproved;
 
     await showDialog<void>(
       context: context,
@@ -2389,6 +2403,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   ),
                 ),
                 DropdownButtonFormField<String>(
+                  key: ValueKey('edit_role_${user.id}'),
                   initialValue: role,
                   decoration: const InputDecoration(labelText: 'Role'),
                   items: const [
@@ -2398,7 +2413,10 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   ],
                   onChanged: (value) {
                     if (value == null) return;
-                    setStateDialog(() => role = value);
+                    setStateDialog(() {
+                      role = value;
+                      if (role != 'faculty') isApproved = true;
+                    });
                   },
                 ),
                 TextField(
@@ -2417,6 +2435,18 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   controller: sectionController,
                   decoration: const InputDecoration(labelText: 'Section'),
                 ),
+                if (role == 'faculty') ...[
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Account approved (can sign in)'),
+                    subtitle: isApproved
+                        ? const Text('Faculty can log in immediately after saving.')
+                        : const Text('A pending approval error will appear on login.'),
+                    value: isApproved,
+                    onChanged: (v) => setStateDialog(() => isApproved = v),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2469,12 +2499,21 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     studentId: nextStudentId,
                     course: nextCourse,
                     section: nextSection,
+                    isApproved: role == 'faculty' ? isApproved : true,
                   );
                   if (!context.mounted) return;
                   Navigator.pop(dialogContext);
                   setState(() => _future = _loadUsers());
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('User updated')),
+                    SnackBar(
+                      content: Text(
+                        role == 'faculty'
+                            ? isApproved
+                                ? 'User updated and approved — faculty can now sign in.'
+                                : 'User updated — account pending approval.'
+                            : 'User updated',
+                      ),
+                    ),
                   );
                 } catch (e) {
                   if (!context.mounted) return;
@@ -3035,12 +3074,6 @@ class _CategoryMenuScreen extends ConsumerWidget {
                       spacing: 6,
                       runSpacing: 6,
                       children: [
-                        if (category.location.trim().isNotEmpty)
-                          Chip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: Icon(Icons.place_outlined, size: 16, color: Theme.of(context).colorScheme.tertiary),
-                            label: Text(category.location.trim(), style: const TextStyle(fontSize: 12)),
-                          ),
                         if (category.allCourses)
                           Chip(
                             visualDensity: VisualDensity.compact,
@@ -3232,12 +3265,6 @@ class _EventListTile extends StatelessWidget {
                             avatar: Icon(Icons.folder_outlined, size: 14, color: scheme.tertiary),
                             label: const Text('Sub-event', style: TextStyle(fontSize: 11)),
                             onSelected: null,
-                          ),
-                        if (event.location.trim().isNotEmpty)
-                          Chip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: Icon(Icons.place_outlined, size: 14, color: scheme.tertiary),
-                            label: Text(event.location.trim(), style: const TextStyle(fontSize: 11)),
                           ),
                         if (event.allCourses)
                           Chip(
@@ -3470,12 +3497,6 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
-                            if (widget.event.location.trim().isNotEmpty)
-                              Chip(
-                                visualDensity: VisualDensity.compact,
-                                avatar: Icon(Icons.place_outlined, size: 16, color: Theme.of(context).colorScheme.tertiary),
-                                label: Text(widget.event.location.trim(), style: const TextStyle(fontSize: 12)),
-                              ),
                             if (widget.event.allCourses)
                               Chip(
                                 visualDensity: VisualDensity.compact,
