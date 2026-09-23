@@ -40,6 +40,65 @@ const BREVO_SENDER_EMAIL = (process.env.BREVO_SENDER_EMAIL || GMAIL_USER || '').
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resends
 
+const ALL_COURSES = [
+  'Bachelor of Science in Criminology',
+  'Bachelor of Science in Information System',
+  'Bachelor of Science in Psychology',
+  'Bachelor of Science in Accounting Information System',
+  'Bachelor of Secondary Education',
+  'Bachelor of Science in Accountancy',
+];
+const COURSE_CODES = {
+  'Bachelor of Science in Criminology': 'BSC',
+  'Bachelor of Science in Information System': 'BSIS',
+  'Bachelor of Science in Psychology': 'BSP',
+  'Bachelor of Science in Accounting Information System': 'BSAIS',
+  'Bachelor of Secondary Education': 'BSED',
+  'Bachelor of Science in Accountancy': 'BSA',
+};
+const ALL_COURSES_SET = new Set(ALL_COURSES);
+
+const normalizeCourses = (value, { allowEmpty = false } = {}) => {
+  if (Array.isArray(value)) {
+    const seen = new Set();
+    const out = [];
+    for (const raw of value) {
+      const s = String(raw || '').trim();
+      if (!s) continue;
+      if (!ALL_COURSES_SET.has(s)) continue;
+      if (seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+    return out;
+  }
+  return allowEmpty ? [] : [...ALL_COURSES];
+};
+
+const eventIsVisibleToStudent = (event, studentCourse) => {
+  if (!event || !event.id) return false;
+  if (event.isCategory === true) return true;
+  if (event.allCourses === true) return true;
+  const sc = studentCourse ? String(studentCourse).trim() : '';
+  if (!sc) return false;
+  const courses = Array.isArray(event.courses) ? event.courses : [];
+  return courses.includes(sc);
+};
+
+const eventApplyDefaults = (e) => {
+  if (e.allCourses !== true && e.allCourses !== false) e.allCourses = true;
+  if (!Array.isArray(e.courses)) e.courses = [...ALL_COURSES];
+  if (e.isCategory !== true && e.isCategory !== false) e.isCategory = false;
+  if (e.parentId !== null && (typeof e.parentId !== 'string' || !e.parentId)) e.parentId = null;
+  if (!e.parentId) e.parentId = null;
+  if (typeof e.location !== 'string') e.location = '';
+  return e;
+};
+
+app.get('/api/courses', authenticateToken, (_req, res) => {
+  res.json({ courses: ALL_COURSES, courseCodes: COURSE_CODES });
+});
+
 // ----- Nodemailer (Gmail) transport -----
 // NOTE: SMTP (both ports 465 and 587) is completely blocked on Render Free Tier egress.
 // Gmail SMTP transporter is initialized here for non-Render environments only.
@@ -1091,79 +1150,151 @@ app.get('/api/me', authenticateToken, (req, res) => {
 
 // Events
 app.get('/api/events', authenticateToken, (req, res) => {
-  const events = loadData(eventsFile);
+  let events = loadData(eventsFile).map((e) => eventApplyDefaults(e));
+  const users = loadData(usersFile);
+  const account = users.find((u) => u.id === req.user.id);
+  if (account && account.role === 'student') {
+    const studentCourse = account.course || '';
+    const visibleIds = new Set();
+    for (const e of events) {
+      if (eventIsVisibleToStudent(e, studentCourse)) {
+        visibleIds.add(e.id);
+        if (e.isCategory !== true && e.parentId) visibleIds.add(e.parentId);
+      }
+    }
+    const categoryIds = new Set(events.filter((e) => e.isCategory === true).map((e) => e.id));
+    // Keep any parent categories that have at least one VISIBLE child sub-event,
+    // even if the category itself was explicitly excluded from courses (child wins).
+    for (const e of events) {
+      if (e.parentId && categoryIds.has(e.parentId) && visibleIds.has(e.id)) {
+        visibleIds.add(e.parentId);
+      }
+    }
+    events = events.filter((e) => visibleIds.has(e.id));
+  }
   res.json(events);
 });
 
 const MAX_POSTER_CHARS = 7_000_000; // ~7MB base64 ≈ 5.25MB raw image (target ≈ 5 MB)
 const MAX_DESC_CHARS = 5000;
+const MAX_EVENT_NAME_CHARS = 200;
+const MAX_EVENT_LOCATION_CHARS = 200;
+
+const parseEventRequestPayload = (body, existing = null) => {
+  const {
+    name, date, status, startAt, endAt, description, posterImageUrl,
+    courses, allCourses, parentId, isCategory, location,
+  } = body || {};
+  const cleanName = String(name ?? existing?.name ?? '').trim().slice(0, MAX_EVENT_NAME_CHARS);
+  const cleanDate = String(date ?? existing?.date ?? '').trim();
+  const cleanStatus = ['draft', 'open', 'closed'].includes(status) ? status : (existing?.status ?? 'open');
+  const cleanStartAt = startAt || null;
+  const cleanEndAt = endAt || null;
+  const cleanDescRaw = description ?? existing?.description ?? '';
+  const cleanDesc = (typeof cleanDescRaw === 'string' && cleanDescRaw.length <= MAX_DESC_CHARS)
+    ? cleanDescRaw.trim()
+    : String(cleanDescRaw ?? '').trim().slice(0, MAX_DESC_CHARS);
+  const posterRaw = posterImageUrl ?? existing?.posterImageUrl ?? '';
+  const cleanPoster = (typeof posterRaw === 'string' && posterRaw.trim().length <= MAX_POSTER_CHARS)
+    ? posterRaw.trim()
+    : (typeof posterRaw === 'string' ? '' : '');
+  const cleanLocation = String(location ?? existing?.location ?? '').trim().slice(0, MAX_EVENT_LOCATION_CHARS);
+  const nextIsCategory = isCategory != null
+    ? Boolean(isCategory)
+    : (existing?.isCategory === true);
+  let nextParentId = parentId;
+  if (nextParentId === undefined && existing) nextParentId = existing.parentId ?? null;
+  if (typeof nextParentId !== 'string' || !nextParentId) nextParentId = null;
+  let nextAllCourses = allCourses;
+  if (nextAllCourses == null && existing) nextAllCourses = existing.allCourses;
+  if (nextAllCourses !== true && nextAllCourses !== false) nextAllCourses = true;
+  let nextCourses;
+  if (courses === undefined && existing) nextCourses = existing.courses;
+  if (!nextCourses) nextCourses = courses;
+  nextCourses = normalizeCourses(nextCourses);
+  if (nextAllCourses === true) nextCourses = [...ALL_COURSES];
+  return {
+    name: cleanName,
+    date: cleanDate,
+    status: cleanStatus,
+    startAt: cleanStartAt,
+    endAt: cleanEndAt,
+    description: cleanDesc,
+    posterImageUrl: cleanPoster,
+    location: cleanLocation,
+    isCategory: nextIsCategory,
+    parentId: nextParentId,
+    allCourses: nextAllCourses,
+    courses: nextCourses,
+  };
+};
 
 app.post('/api/events', authenticateToken, requireAdmin, (req, res) => {
-  const events = loadData(eventsFile);
-  const { name, date, status, startAt, endAt, description, posterImageUrl } = req.body;
-  if (!name || !date) return res.status(400).json({ error: 'Invalid payload' });
-  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length > MAX_POSTER_CHARS) {
+  const events = loadData(eventsFile).map((e) => eventApplyDefaults(e));
+  const parsed = parseEventRequestPayload(req.body);
+  if (!parsed.name || !parsed.date) return res.status(400).json({ error: 'Invalid payload' });
+  if (req.body && typeof req.body.posterImageUrl === 'string' && req.body.posterImageUrl.trim().length > MAX_POSTER_CHARS) {
     return res.status(413).json({
       error: 'Poster image too large',
       message: 'The poster image exceeds the 5 MB limit. Upload a smaller file.',
       maxSizeMb: 5,
     });
   }
-  if (typeof description === 'string' && description.length > MAX_DESC_CHARS) {
+  if (req.body && typeof req.body.description === 'string' && req.body.description.length > MAX_DESC_CHARS) {
     return res.status(400).json({
       error: 'Description too long',
-      message: `Event description is ${description.length} chars. Limit is ${MAX_DESC_CHARS}.`,
+      message: `Event description is ${req.body.description.length} chars. Limit is ${MAX_DESC_CHARS}.`,
     });
   }
-  const cleanPoster = (typeof posterImageUrl === 'string' && posterImageUrl.trim().length <= MAX_POSTER_CHARS)
-    ? posterImageUrl.trim()
-    : '';
-  const cleanDesc = (typeof description === 'string' && description.length <= MAX_DESC_CHARS)
-    ? description.trim()
-    : (description ?? '').toString().trim().slice(0, MAX_DESC_CHARS);
+  if (parsed.parentId) {
+    const parent = events.find((e) => e.id === parsed.parentId);
+    if (!parent) return res.status(400).json({ error: 'Parent event not found' });
+    if (parent.isCategory !== true) return res.status(400).json({ error: 'Parent event must be an event category' });
+  }
   const event = {
     id: uuidv4(),
-    name,
-    date,
-    status: ['draft', 'open', 'closed'].includes(status) ? status : 'open',
-    startAt: startAt || null,
-    endAt: endAt || null,
-    description: cleanDesc,
-    posterImageUrl: cleanPoster,
-    attendees: []
+    ...parsed,
+    attendees: [],
   };
+  eventApplyDefaults(event);
   events.push(event);
   saveData(eventsFile, events);
   res.json(event);
 });
 
 app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
-  const events = loadData(eventsFile);
+  const events = loadData(eventsFile).map((e) => eventApplyDefaults(e));
   const idx = events.findIndex(e => e.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Event not found' });
-  const { name, date, status, startAt, endAt, description, posterImageUrl } = req.body;
-  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length > MAX_POSTER_CHARS) {
+  if (req.body && typeof req.body.posterImageUrl === 'string' && req.body.posterImageUrl.trim().length > MAX_POSTER_CHARS) {
     return res.status(413).json({
       error: 'Poster image too large',
       message: 'The poster image exceeds the 5 MB limit. Upload a smaller file.',
       maxSizeMb: 5,
     });
   }
-  if (typeof description === 'string' && description.length > MAX_DESC_CHARS) {
+  if (req.body && typeof req.body.description === 'string' && req.body.description.length > MAX_DESC_CHARS) {
     return res.status(400).json({
       error: 'Description too long',
-      message: `Event description is ${description.length} chars. Limit is ${MAX_DESC_CHARS}.`,
+      message: `Event description is ${req.body.description.length} chars. Limit is ${MAX_DESC_CHARS}.`,
     });
   }
-  if (name != null) events[idx].name = name;
-  if (date != null) events[idx].date = date;
-  if (status != null && ['draft', 'open', 'closed'].includes(status)) events[idx].status = status;
-  events[idx].startAt = startAt || null;
-  events[idx].endAt = endAt || null;
-  if (typeof description === 'string') events[idx].description = description.trim().slice(0, MAX_DESC_CHARS);
-  if (typeof posterImageUrl === 'string' && posterImageUrl.trim().length <= MAX_POSTER_CHARS) {
-    events[idx].posterImageUrl = posterImageUrl.trim();
+  const merged = parseEventRequestPayload(req.body, events[idx]);
+  if (merged.parentId && merged.parentId === events[idx].id) {
+    return res.status(400).json({ error: 'An event cannot be its own parent' });
   }
+  if (merged.parentId) {
+    const parent = events.find((e) => e.id === merged.parentId && e.id !== events[idx].id);
+    if (!parent) return res.status(400).json({ error: 'Parent event not found' });
+    if (parent.isCategory !== true) return res.status(400).json({ error: 'Parent event must be an event category' });
+  }
+  // Cannot convert a category that has children into a regular event — detach children first.
+  if (merged.isCategory !== true && events[idx].isCategory === true) {
+    const hasChildren = events.some((e, i) => i !== idx && e.parentId === events[idx].id);
+    if (hasChildren) return res.status(400).json({ error: 'Remove sub-events first before changing this category into a regular event' });
+  }
+  events[idx] = { ...events[idx], ...merged, id: events[idx].id, attendees: events[idx].attendees ?? [] };
+  eventApplyDefaults(events[idx]);
   saveData(eventsFile, events);
   res.json(events[idx]);
 });
@@ -1515,6 +1646,15 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
       return res.status(400).json({ error: 'Only faculty can be unapproved' });
     }
     next.isApproved = Boolean(isApproved);
+    if (next.role === 'faculty' && next.isApproved === true) {
+      // When admin approves a faculty account, the account is also considered verified
+      // so the login no longer hits the isVerified gate (which, for faculty, is a
+      // de-facto approval-required state set during registration).
+      next.isVerified = true;
+    }
+    if (next.role === 'faculty' && next.isApproved === false) {
+      next.isVerified = false;
+    }
   }
   if (next.role === 'faculty' && next.isApproved == null) {
     next.isApproved = isFacultyApproved(current);
@@ -1632,6 +1772,14 @@ const ensureAllPasswordsHashed = async () => {
     }
     if (u.isApproved !== true && u.isApproved !== false && u.role !== 'faculty') {
       u.isApproved = true;
+      changed = true;
+    }
+    // Backward-compat: any faculty that is already marked isApproved=true
+    // but isVerified != true must flip isVerified=true. Without this, the user
+    // sees "Account pending admin approval" even after admin hit the Approve
+    // button, because the isVerified gate runs first on /api/login.
+    if (u.role === 'faculty' && u.isApproved === true && u.isVerified !== true) {
+      u.isVerified = true;
       changed = true;
     }
   }

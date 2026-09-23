@@ -35,6 +35,11 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
     String status = 'open',
     String description = '',
     String posterImageUrl = '',
+    String location = '',
+    bool isCategory = false,
+    String? parentId,
+    bool allCourses = true,
+    List<String> courses = const [],
   }) async {
     state = const AsyncValue.loading();
     try {
@@ -50,17 +55,30 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           endAt: endAt,
           description: description,
           posterImageUrl: posterImageUrl,
+          location: location,
+          isCategory: isCategory,
+          parentId: parentId,
+          allCourses: allCourses,
+          courses: courses,
         );
         await DataService.addEvent(event);
         await loadEvents();
         return event;
       } else {
-        final created = await ApiService.addEvent(name, date,
-            startAt: startAt,
-            endAt: endAt,
-            status: status,
-            description: description,
-            posterImageUrl: posterImageUrl);
+        final created = await ApiService.addEvent(
+          name,
+          date,
+          startAt: startAt,
+          endAt: endAt,
+          status: status,
+          description: description,
+          posterImageUrl: posterImageUrl,
+          location: location,
+          isCategory: isCategory,
+          parentId: parentId,
+          allCourses: allCourses,
+          courses: courses,
+        );
         await loadEvents();
         return created;
       }
@@ -79,6 +97,12 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
     DateTime? endAt,
     String? description,
     String? posterImageUrl,
+    String? location,
+    bool? isCategory,
+    String? parentId,
+    bool? clearParentId = false,
+    bool? allCourses,
+    List<String>? courses,
   }) async {
     state = const AsyncValue.loading();
     try {
@@ -89,16 +113,20 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
         final idx = events.indexWhere((e) => e.id == id);
         if (idx == -1) return null;
         final current = events[idx];
-        final next = Event(
-          id: current.id,
-          name: name ?? current.name,
-          date: date ?? current.date,
-          status: status ?? current.status,
+        final next = current.copyWith(
+          name: name,
+          date: date,
+          status: status,
           startAt: startAt,
           endAt: endAt,
-          description: description ?? current.description,
-          posterImageUrl: posterImageUrl ?? current.posterImageUrl,
-          attendees: current.attendees,
+          description: description,
+          posterImageUrl: posterImageUrl,
+          location: location,
+          isCategory: isCategory,
+          parentId: parentId,
+          clearParentId: clearParentId,
+          allCourses: allCourses,
+          courses: courses,
         );
         await DataService.deleteEvent(id);
         await DataService.addEvent(next);
@@ -114,6 +142,12 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           endAt: endAt,
           description: description,
           posterImageUrl: posterImageUrl,
+          location: location,
+          isCategory: isCategory,
+          parentId: parentId,
+          clearParentId: clearParentId,
+          allCourses: allCourses,
+          courses: courses,
         );
         await loadEvents();
         return updated;

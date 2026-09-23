@@ -50,6 +50,23 @@ const int _kPosterMaxSidePx = 4096;
 const int _kPosterMaxBytes = 5250 * 1024; // 5.25 MB raw bytes (target ≈ 5 MB)
 const int _kPosterMaxBase64Chars = 7 * 1024 * 1024; // 7 MB base64 (raw → 4/3 expansion)
 
+const List<String> kCoursesList = [
+  'Bachelor of Science in Criminology',
+  'Bachelor of Science in Information System',
+  'Bachelor of Science in Psychology',
+  'Bachelor of Science in Accounting Information System',
+  'Bachelor of Secondary Education',
+  'Bachelor of Science in Accountancy',
+];
+const Map<String, String> kCourseShort = {
+  'Bachelor of Science in Criminology': 'BSC',
+  'Bachelor of Science in Information System': 'BSIS',
+  'Bachelor of Science in Psychology': 'BSP',
+  'Bachelor of Science in Accounting Information System': 'BSAIS',
+  'Bachelor of Secondary Education': 'BSED',
+  'Bachelor of Science in Accountancy': 'BSA',
+};
+
 Future<Uint8List> _compressPosterBytes(Uint8List raw) async {
   // Passthrough: preserve original quality, dimensions, aspect ratio, and visual appearance.
   // No crop, no stretch, no resample. Size is enforced only via hard caps in the picker handler.
@@ -846,6 +863,10 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
                           final event = events[index];
+                          final scheme = Theme.of(context).colorScheme;
+                          final courseCodes = event.courses.map((c) => kCourseShort[c] ?? c).toList();
+                          final shownCodes = courseCodes.take(3).toList();
+                          final remainingCourses = courseCodes.length - shownCodes.length;
                           return Card(
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -854,23 +875,72 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                                   width: 44,
                                   height: 44,
                                   decoration: BoxDecoration(
-                                    color: Theme.of(context).colorScheme.secondaryContainer,
+                                    color: scheme.secondaryContainer,
                                     borderRadius: BorderRadius.circular(14),
                                   ),
                                   child: Icon(
                                     Icons.event,
-                                    color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                    color: scheme.onSecondaryContainer,
                                   ),
                                 ),
                                 title: Text(event.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                                subtitle: Text(
-                                  [
-                                    '${event.date.toLocal()}'.split(' ')[0],
-                                    event.status.toUpperCase(),
-                                    if (event.startAt != null && event.endAt != null)
-                                      '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
-                                  ].join(' • '),
-                                  style: const TextStyle(color: Colors.black54),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      [
+                                        '${event.date.toLocal()}'.split(' ')[0],
+                                        event.status.toUpperCase(),
+                                        if (event.startAt != null && event.endAt != null)
+                                          '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
+                                      ].join(' • '),
+                                      style: const TextStyle(color: Colors.black54),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Wrap(
+                                      spacing: 4,
+                                      runSpacing: 4,
+                                      children: [
+                                        if (event.isCategory)
+                                          FilterChip(
+                                            visualDensity: VisualDensity.compact,
+                                            avatar: Icon(Icons.layers, size: 14, color: scheme.primary),
+                                            label: const Text('Category', style: TextStyle(fontSize: 11)),
+                                            onSelected: null,
+                                          )
+                                        else if (event.parentId != null)
+                                          FilterChip(
+                                            visualDensity: VisualDensity.compact,
+                                            avatar: Icon(Icons.folder_outlined, size: 14, color: scheme.tertiary),
+                                            label: const Text('Sub-event', style: TextStyle(fontSize: 11)),
+                                            onSelected: null,
+                                          ),
+                                        if (event.location.trim().isNotEmpty)
+                                          Chip(
+                                            visualDensity: VisualDensity.compact,
+                                            avatar: Icon(Icons.place_outlined, size: 14, color: scheme.tertiary),
+                                            label: Text(event.location.trim(), style: const TextStyle(fontSize: 11)),
+                                          ),
+                                        if (event.allCourses)
+                                          Chip(
+                                            visualDensity: VisualDensity.compact,
+                                            label: const Text('All Courses', style: TextStyle(fontSize: 11)),
+                                            backgroundColor: Colors.green.shade100,
+                                          )
+                                        else ...[
+                                          ...shownCodes.map((c) => Chip(
+                                                visualDensity: VisualDensity.compact,
+                                                label: Text(c, style: const TextStyle(fontSize: 11)),
+                                              )),
+                                          if (remainingCourses > 0)
+                                            Chip(
+                                              visualDensity: VisualDensity.compact,
+                                              label: Text('+$remainingCourses more', style: const TextStyle(fontSize: 11)),
+                                            ),
+                                        ],
+                                      ],
+                                    ),
+                                  ],
                                 ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -909,6 +979,7 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
 Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
   final nameController = TextEditingController();
   final descriptionController = TextEditingController();
+  final locationController = TextEditingController();
   DateTime date = DateTime.now();
   String status = 'open';
   bool enableWindow = false;
@@ -917,15 +988,21 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
   Uint8List? pickedBytes;
   String posterDataUrl = '';
   bool busyPicking = false;
+  String? parentId;
+  bool isCategory = false;
+  bool allCourses = true;
+  Set<String> pickedCourses = {};
   final scrollController = ScrollController();
   final imagePicker = ImagePicker();
+  final allEvents = ref.read(eventProvider).valueOrNull ?? [];
+  final parentCategories = allEvents.where((e) => e.isCategory == true).toList();
   await showDialog<void>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: const Text('Add Event'),
         content: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 520),
+          constraints: const BoxConstraints(maxHeight: 720),
           child: SingleChildScrollView(
             controller: scrollController,
             child: Column(
@@ -1140,45 +1217,153 @@ Future<void> _showAddEventDialog(BuildContext context, WidgetRef ref) async {
                     ],
                   ),
                 ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: locationController,
+                  decoration: const InputDecoration(
+                    labelText: 'Location',
+                    prefixIcon: Icon(Icons.location_on_outlined),
+                  ),
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Event Category / Main event'),
+                  subtitle: isCategory
+                      ? const Text('This event will be shown as a group/menu containing sub-events')
+                      : null,
+                  value: isCategory,
+                  onChanged: (v) => setState(() => isCategory = v),
+                ),
+                if (!isCategory) ...[
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String?>(
+                    key: ValueKey(parentId ?? '__none__'),
+                    initialValue: parentId,
+                    decoration: const InputDecoration(
+                      labelText: 'Parent category (optional: make this a sub-event)',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('(None / Standalone event)'),
+                      ),
+                      ...parentCategories.map((e) => DropdownMenuItem<String?>(
+                            value: e.id,
+                            child: Text(e.name),
+                          )),
+                    ],
+                    onChanged: (value) {
+                      setState(() => parentId = value);
+                    },
+                  ),
+                ],
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('All Courses (visible to every student)'),
+                  value: allCourses,
+                  onChanged: (v) => setState(() => allCourses = v),
+                ),
+                if (!allCourses) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Select courses',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: kCoursesList.map((course) {
+                      final short = kCourseShort[course] ?? course;
+                      final isSelected = pickedCourses.contains(course);
+                      return FilterChip(
+                        label: Text(short),
+                        selected: isSelected,
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              pickedCourses.add(course);
+                            } else {
+                              pickedCourses.remove(course);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: allCourses
+                      ? [
+                          Chip(
+                            label: const Text('All Courses'),
+                            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                          ),
+                        ]
+                      : pickedCourses.map((course) {
+                          final short = kCourseShort[course] ?? course;
+                          return Chip(
+                            label: Text(short),
+                          );
+                        }).toList(),
+                ),
               ],
             ),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () {
+            Navigator.pop(context);
+            locationController.dispose();
+          }, child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
-              final name = nameController.text.trim();
-              if (name.isEmpty) return;
-              final prefs = await SharedPreferences.getInstance();
-              final token = prefs.getString('auth_token');
-              if (token == null) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Offline mode: connect to the server and login again to create events.')),
-                  );
+              try {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+                final prefs = await SharedPreferences.getInstance();
+                final token = prefs.getString('auth_token');
+                if (token == null) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Offline mode: connect to the server and login again to create events.')),
+                    );
+                  }
+                  return;
                 }
-                return;
-              }
-              DateTime? startAt;
-              DateTime? endAtDt;
-              if (enableWindow) {
-                startAt = DateTime(date.year, date.month, date.day, startTime.hour, startTime.minute);
-                endAtDt = DateTime(date.year, date.month, date.day, endTime.hour, endTime.minute);
-              }
-              final created = await ref.read(eventProvider.notifier).addEvent(
-                    name,
-                    date,
-                    status: status,
-                    startAt: startAt,
-                    endAt: endAtDt,
-                    description: descriptionController.text.trim(),
-                    posterImageUrl: posterDataUrl,
-                  );
-              if (!context.mounted) return;
-              Navigator.pop(context);
-              if (created != null) {
-                await _showEventQr(context, created);
+                DateTime? startAt;
+                DateTime? endAtDt;
+                if (enableWindow) {
+                  startAt = DateTime(date.year, date.month, date.day, startTime.hour, startTime.minute);
+                  endAtDt = DateTime(date.year, date.month, date.day, endTime.hour, endTime.minute);
+                }
+                final created = await ref.read(eventProvider.notifier).addEvent(
+                      name,
+                      date,
+                      status: status,
+                      startAt: startAt,
+                      endAt: endAtDt,
+                      description: descriptionController.text.trim(),
+                      posterImageUrl: posterDataUrl,
+                      location: locationController.text.trim(),
+                      isCategory: isCategory,
+                      parentId: parentId,
+                      allCourses: allCourses,
+                      courses: allCourses ? const [] : pickedCourses.toList(),
+                    );
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                if (created != null) {
+                  await _showEventQr(context, created);
+                }
+              } finally {
+                locationController.dispose();
               }
             },
             child: const Text('Add'),
@@ -2706,11 +2891,13 @@ class StudentEventsTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (events) {
-        final visible = events.where((e) => e.status != 'draft').toList()
+        final rootEvents = events.where((e) => e.status != 'draft' && e.parentId == null).toList()
           ..sort((a, b) => b.date.compareTo(a.date));
+        final categories = rootEvents.where((e) => e.isCategory).toList();
+        final regular = rootEvents.where((e) => !e.isCategory).toList();
         return RefreshIndicator(
           onRefresh: () => ref.read(eventProvider.notifier).loadEvents(),
-          child: visible.isEmpty
+          child: categories.isEmpty && regular.isEmpty
               ? ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
@@ -2723,24 +2910,222 @@ class StudentEventsTab extends ConsumerWidget {
                     ),
                   ],
                 )
-              : ListView.separated(
+              : ListView(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  itemCount: visible.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final event = visible[index];
-                    return _EventListTile(event: event, onTap: () {
-                      Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          builder: (_) => _EventDetailScreen(event: event, user: user),
-                        ),
-                      );
-                    });
-                  },
+                  children: [
+                    if (categories.isNotEmpty) ...[
+                      Text(
+                        'Event Categories',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 12),
+                      ...categories.map((e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _EventListTile(
+                              event: e,
+                              onTap: () {
+                                Navigator.of(context).push<void>(
+                                  MaterialPageRoute(
+                                    builder: (_) => _CategoryMenuScreen(category: e, user: user),
+                                  ),
+                                );
+                              },
+                            ),
+                          )),
+                      const SizedBox(height: 4),
+                    ],
+                    if (regular.isNotEmpty) ...[
+                      Text(
+                        'Events',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 12),
+                      ...regular.map((e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _EventListTile(
+                              event: e,
+                              onTap: () {
+                                Navigator.of(context).push<void>(
+                                  MaterialPageRoute(
+                                    builder: (_) => _EventDetailScreen(event: e, user: user),
+                                  ),
+                                );
+                              },
+                            ),
+                          )),
+                    ],
+                  ],
                 ),
         );
       },
     );
+  }
+}
+
+class _CategoryMenuScreen extends ConsumerWidget {
+  final Event category;
+  final User user;
+  const _CategoryMenuScreen({required this.category, required this.user});
+
+  Uint8List? _decodePoster() {
+    final url = category.posterImageUrl;
+    if (url.isEmpty) return null;
+    final prefix = ';base64,';
+    final idx = url.indexOf(prefix);
+    if (idx < 0) return null;
+    try {
+      return base64Decode(url.substring(idx + prefix.length));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final posterBytes = _decodePoster();
+    final textTheme = Theme.of(context).textTheme;
+    final eventsState = ref.watch(eventProvider);
+    final subEvents = eventsState.valueOrNull
+            ?.where((e) => e.parentId == category.id && e.status != 'draft')
+            .toList()
+      ?..sort((a, b) => b.date.compareTo(a.date));
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(category.name),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        forceMaterialTransparency: true,
+        elevation: 0,
+        flexibleSpace: const _AppBarGradientBg(),
+      ),
+      body: _TabBackground(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (posterBytes != null) ...[
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: Image.memory(posterBytes, fit: BoxFit.cover, height: 180, width: double.infinity),
+              ),
+              const SizedBox(height: 14),
+            ],
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      category.name,
+                      style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      [
+                        '${category.date.toLocal()}'.split(' ')[0],
+                        category.status.toUpperCase(),
+                        if (category.startAt != null && category.endAt != null)
+                          '${TimeOfDay.fromDateTime(category.startAt!).format(context)}-${TimeOfDay.fromDateTime(category.endAt!).format(context)}',
+                      ].join(' • '),
+                      style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        if (category.location.trim().isNotEmpty)
+                          Chip(
+                            visualDensity: VisualDensity.compact,
+                            avatar: Icon(Icons.place_outlined, size: 16, color: Theme.of(context).colorScheme.tertiary),
+                            label: Text(category.location.trim(), style: const TextStyle(fontSize: 12)),
+                          ),
+                        if (category.allCourses)
+                          Chip(
+                            visualDensity: VisualDensity.compact,
+                            label: const Text('All Courses', style: TextStyle(fontSize: 12)),
+                            backgroundColor: Colors.green.shade100,
+                          )
+                        else
+                          ..._buildCourseChips(category.courses),
+                      ],
+                    ),
+                    if (category.description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7F8FC),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          category.description.trim(),
+                          style: textTheme.bodyMedium?.copyWith(height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'Activities',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 12),
+            if (subEvents == null)
+              const Center(child: CircularProgressIndicator())
+            else if (subEvents.isEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'No activities yet in this category.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                  ),
+                ),
+              )
+            else
+              ...subEvents.map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _EventListTile(
+                      event: e,
+                      onTap: () {
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => _EventDetailScreen(event: e, user: user),
+                          ),
+                        );
+                      },
+                    ),
+                  )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildCourseChips(List<String> courses) {
+    final chips = <Widget>[];
+    final codes = courses.map((c) => kCourseShort[c] ?? c).toList();
+    final shown = codes.take(3).toList();
+    final remaining = codes.length - shown.length;
+    for (final c in shown) {
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        label: Text(c, style: const TextStyle(fontSize: 12)),
+      ));
+    }
+    if (remaining > 0) {
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        label: Text('+$remaining more', style: const TextStyle(fontSize: 12)),
+      ));
+    }
+    return chips;
   }
 }
 
@@ -2762,9 +3147,30 @@ class _EventListTile extends StatelessWidget {
     }
   }
 
+  List<Widget> _buildCourseChips(List<String> courses, BuildContext context) {
+    final chips = <Widget>[];
+    final codes = courses.map((c) => kCourseShort[c] ?? c).toList();
+    final shown = codes.take(3).toList();
+    final remaining = codes.length - shown.length;
+    for (final c in shown) {
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        label: Text(c, style: const TextStyle(fontSize: 11)),
+      ));
+    }
+    if (remaining > 0) {
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        label: Text('+$remaining more', style: const TextStyle(fontSize: 11)),
+      ));
+    }
+    return chips;
+  }
+
   @override
   Widget build(BuildContext context) {
     final posterBytes = _decodePoster();
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -2779,11 +3185,11 @@ class _EventListTile extends StatelessWidget {
                 child: Container(
                   width: 88,
                   height: 88,
-                  color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.5),
+                  color: scheme.secondaryContainer.withValues(alpha: 0.5),
                   child: posterBytes != null
                       ? Image.memory(posterBytes, fit: BoxFit.cover)
                       : Icon(Icons.event_rounded,
-                          size: 38, color: Theme.of(context).colorScheme.onSecondaryContainer),
+                          size: 38, color: scheme.onSecondaryContainer),
                 ),
               ),
               const SizedBox(width: 12),
@@ -2807,6 +3213,41 @@ class _EventListTile extends StatelessWidget {
                           '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
                       ].join(' • '),
                       style: const TextStyle(color: Colors.black54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        if (event.isCategory)
+                          FilterChip(
+                            visualDensity: VisualDensity.compact,
+                            avatar: Icon(Icons.layers, size: 14, color: scheme.primary),
+                            label: const Text('Category', style: TextStyle(fontSize: 11)),
+                            onSelected: null,
+                          )
+                        else if (event.parentId != null)
+                          FilterChip(
+                            visualDensity: VisualDensity.compact,
+                            avatar: Icon(Icons.folder_outlined, size: 14, color: scheme.tertiary),
+                            label: const Text('Sub-event', style: TextStyle(fontSize: 11)),
+                            onSelected: null,
+                          ),
+                        if (event.location.trim().isNotEmpty)
+                          Chip(
+                            visualDensity: VisualDensity.compact,
+                            avatar: Icon(Icons.place_outlined, size: 14, color: scheme.tertiary),
+                            label: Text(event.location.trim(), style: const TextStyle(fontSize: 11)),
+                          ),
+                        if (event.allCourses)
+                          Chip(
+                            visualDensity: VisualDensity.compact,
+                            label: const Text('All Courses', style: TextStyle(fontSize: 11)),
+                            backgroundColor: Colors.green.shade100,
+                          )
+                        else
+                          ..._buildCourseChips(event.courses, context),
+                      ],
                     ),
                     if (event.description.trim().isNotEmpty) ...[
                       const SizedBox(height: 6),
@@ -2932,6 +3373,26 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
     return NetworkImage(url);
   }
 
+  List<Widget> _buildDetailCourseChips(List<String> courses) {
+    final chips = <Widget>[];
+    final codes = courses.map((c) => kCourseShort[c] ?? c).toList();
+    final shown = codes.take(3).toList();
+    final remaining = codes.length - shown.length;
+    for (final c in shown) {
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        label: Text(c, style: const TextStyle(fontSize: 12)),
+      ));
+    }
+    if (remaining > 0) {
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        label: Text('+$remaining more', style: const TextStyle(fontSize: 12)),
+      ));
+    }
+    return chips;
+  }
+
   @override
   Widget build(BuildContext context) {
     final poster = _posterImage();
@@ -3004,6 +3465,52 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
                           ].join(' • '),
                           style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
                         ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            if (widget.event.location.trim().isNotEmpty)
+                              Chip(
+                                visualDensity: VisualDensity.compact,
+                                avatar: Icon(Icons.place_outlined, size: 16, color: Theme.of(context).colorScheme.tertiary),
+                                label: Text(widget.event.location.trim(), style: const TextStyle(fontSize: 12)),
+                              ),
+                            if (widget.event.allCourses)
+                              Chip(
+                                visualDensity: VisualDensity.compact,
+                                label: const Text('All Courses', style: TextStyle(fontSize: 12)),
+                                backgroundColor: Colors.green.shade100,
+                              )
+                            else
+                              ..._buildDetailCourseChips(widget.event.courses),
+                          ],
+                        ),
+                        if (widget.event.parentId != null) ...[
+                          const SizedBox(height: 8),
+                          Consumer(
+                            builder: (context, cRef, _) {
+                              final eventsState = cRef.watch(eventProvider);
+                              final events = eventsState.valueOrNull ?? <Event>[];
+                              final parent = events.cast<Event?>().firstWhere(
+                                    (e) => e?.id == widget.event.parentId,
+                                    orElse: () => null,
+                                  );
+                              if (parent == null) return const SizedBox.shrink();
+                              return TextButton.icon(
+                                onPressed: () {
+                                  Navigator.of(context).push<void>(
+                                    MaterialPageRoute(
+                                      builder: (_) => _CategoryMenuScreen(category: parent, user: widget.user),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.folder_outlined),
+                                label: Text('Open category: ${parent.name}'),
+                              );
+                            },
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         if (widget.event.description.trim().isEmpty)
                           Container(

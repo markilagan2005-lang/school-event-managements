@@ -165,9 +165,21 @@ class ApiService {
         endAt: _parseDateTime(e['endAt']),
         description: e['description']?.toString() ?? '',
         posterImageUrl: e['posterImageUrl']?.toString() ?? '',
+        location: e['location']?.toString() ?? '',
+        isCategory: e['isCategory'] == true,
+        parentId: (e['parentId']?.toString().isNotEmpty == true) ? e['parentId'].toString() : null,
+        allCourses: e['allCourses'] == true || e['allCourses'] == null,
+        courses: (e['courses'] as List<dynamic>? ?? []).whereType<String>().toList(),
         attendees: attendees,
       );
     }).toList();
+  }
+
+  static Future<Map<String, dynamic>> getCourses() async {
+    final c = await _client();
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    return c.getJsonMap('/courses', token: token);
   }
 
   static Future<Event> addEvent(
@@ -178,6 +190,11 @@ class ApiService {
     String status = 'open',
     String description = '',
     String posterImageUrl = '',
+    String location = '',
+    bool isCategory = false,
+    String? parentId,
+    bool allCourses = true,
+    List<String> courses = const [],
   }) async {
     final c = await _client();
     final prefs = await SharedPreferences.getInstance();
@@ -192,20 +209,15 @@ class ApiService {
         if (endAt != null) 'endAt': _toServerIso(endAt),
         'description': description,
         'posterImageUrl': posterImageUrl,
+        'location': location,
+        'isCategory': isCategory,
+        'parentId': parentId,
+        'allCourses': allCourses,
+        'courses': courses,
       },
       token: token,
     );
-    return Event(
-      id: res['id'] ?? '',
-      name: res['name'] ?? '',
-      date: _parseDateTime(res['date']) ?? DateTime.now(),
-      status: res['status'] ?? status,
-      startAt: _parseDateTime(res['startAt']) ?? startAt,
-      endAt: _parseDateTime(res['endAt']) ?? endAt,
-      description: res['description']?.toString() ?? description,
-      posterImageUrl: res['posterImageUrl']?.toString() ?? posterImageUrl,
-      attendees: const [],
-    );
+    return Event.fromJson(res);
   }
 
   static Future<Event> updateEvent(
@@ -217,6 +229,12 @@ class ApiService {
     DateTime? endAt,
     String? description,
     String? posterImageUrl,
+    String? location,
+    bool? isCategory,
+    String? parentId,
+    bool? clearParentId = false,
+    bool? allCourses,
+    List<String>? courses,
   }) async {
     final c = await _client();
     final prefs = await SharedPreferences.getInstance();
@@ -231,6 +249,12 @@ class ApiService {
         'endAt': endAt == null ? null : _toServerIso(endAt),
         if (description != null) 'description': description,
         if (posterImageUrl != null) 'posterImageUrl': posterImageUrl,
+        if (location != null) 'location': location,
+        if (isCategory != null) 'isCategory': isCategory,
+        if (clearParentId == true) 'parentId': null,
+        if (parentId != null && clearParentId != true) 'parentId': parentId,
+        if (allCourses != null) 'allCourses': allCourses,
+        if (courses != null) 'courses': courses,
       },
       token: token,
     );
