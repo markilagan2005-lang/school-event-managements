@@ -1724,11 +1724,41 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
   res.json(toPublicUser(u));
 });
 
-app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+app.patch('/api/users/:id', authenticateToken, async (req, res) => {
+  // Authorization (replaces the old requireAdmin middleware so professors can patch THEIR OWN
+  // handledCourses / profile fields without Admin-Only 403, while admins still edit any user):
+  //   - Admin role: any field on any user allowed (existing, full CRUD in Edit User dialog).
+  //   - Non-admin (professor/student) with id == req.params.id: SELF-UPDATE allowed on a strict
+  //     WHITELIST of non-admin fields: password, fullName, handledCourses, studentId, course,
+  //     section. Role changes, id changes, approval flag flips MUST go through admin only.
+  //   - Non-admin patching a DIFFERENT id: 403 "Admin only" (preserves old security for students
+  //     attempting to modify classmates, professors attempting to edit other profs, etc.).
+  const isAdmin = req.user && req.user.role === 'admin';
+  const isSelfUpdate = req.user && String(req.user.id) === String(req.params.id);
+  if (!isAdmin && !isSelfUpdate) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  // For self-updates, compute and enforce a strict WHITELIST of allowed keys. Any attempt to
+  // mutate fields outside the whitelist (role, isApproved, isVerified, id) is rejected 400 with
+  // a descriptive message so the client can surface what went wrong to the user (e.g. Snackbar).
+  const SELF_EDITABLE_KEYS = new Set([
+    'password', 'fullName', 'handledCourses', 'studentId', 'course', 'section', 'email',
+  ]);
+  const reqKeys = Object.keys(req.body || {});
+  let forbiddenKeys = null;
+  if (!isAdmin && isSelfUpdate) {
+    forbiddenKeys = reqKeys.filter((k) => !SELF_EDITABLE_KEYS.has(k));
+    if (forbiddenKeys.length > 0) {
+      return res.status(400).json({
+        error: 'You can only edit your own profile fields (' +
+               Array.from(SELF_EDITABLE_KEYS).join(', ') + '). Field "' +
+               forbiddenKeys[0] + '" requires administrator privileges.',
+      });
+    }
+  }
   const users = loadData(usersFile);
   const idx = users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const isSelfUpdate = req.user && req.user.id === req.params.id;
 
   const current = users[idx];
   const next = { ...current };
