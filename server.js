@@ -58,6 +58,10 @@ const COURSE_CODES = {
 };
 const ALL_COURSES_SET = new Set(ALL_COURSES);
 
+const COURSE_SHORT_TO_FULL = Object.fromEntries(
+  Object.entries(COURSE_CODES).map(([full, short]) => [short, full]),
+);
+
 const normalizeHandledCourses = (value) => {
   if (Array.isArray(value)) {
     const seen = new Set();
@@ -65,10 +69,17 @@ const normalizeHandledCourses = (value) => {
     for (const raw of value) {
       const s = String(raw || '').trim();
       if (!s) continue;
-      if (!ALL_COURSES_SET.has(s)) continue;
-      if (seen.has(s)) continue;
-      seen.add(s);
-      out.push(s);
+      // Accept BOTH the canonical full degree name ("Bachelor of Science in Psychology")
+      // AND the short code alias ("BSP") from the registration dialog. We always coerce
+      // to the full name for storage because it is the canonical format expected by:
+      //   - ALL_COURSES / ALL_COURSES_SET canonicalization on server
+      //   - Client drawer display (kCourseShort keys are full names)
+      //   - Client CheckboxListTile checks in _promptHandledCoursesSetup (uses kCoursesList)
+      const canonical = COURSE_SHORT_TO_FULL[s] || (ALL_COURSES_SET.has(s) ? s : null);
+      if (!canonical) continue;
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      out.push(canonical);
     }
     return out;
   }
@@ -2009,6 +2020,24 @@ const ensureAllPasswordsHashed = async () => {
     if (!Array.isArray(u.handledCourses)) {
       u.handledCourses = [];
       changed = true;
+    }
+    // --- HANDLED COURSES CANONICALIZATION (bidirectional boot sync) ---
+    // For professors, coerce the handledCourses array into the canonical FULL degree name
+    // format (same format as ALL_COURSES, e.g. "Bachelor of Science in Psychology").
+    // During a bug window, the registration dashboard sent SHORT codes (BSP, BSC, BSIS, …)
+    // instead of full names. normalizeHandledCourses now accepts both formats and returns
+    // only full names. Running it here on every boot auto-repairs ANY short-code records
+    // that were written to Mongo before the server/client code was updated, so professors
+    // don't see wrong courses (or empty handledCourses) the first time they log in after
+    // this deploy.
+    if (u.role === 'faculty') {
+      const before = Array.isArray(u.handledCourses) ? u.handledCourses.join('|') : '';
+      const canonicalized = normalizeHandledCourses(u.handledCourses);
+      const after = canonicalized.join('|');
+      if (before !== after) {
+        u.handledCourses = canonicalized;
+        changed = true;
+      }
     }
     // FINAL CANONICAL SYNC (bidirectional, catches every legacy flag mismatch):
     // For professors, isApproved and isVerified MUST always travel together (both true

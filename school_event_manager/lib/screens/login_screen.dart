@@ -1343,8 +1343,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           email: role == 'student' ? email : null,
                           registrationOtp: role == 'student' ? otp : null,
                           registrationOtpRef: role == 'student' ? otpRef : null,
-                          handledCourses:
-                              role == 'faculty' ? selectedHandledCourseCodes.toList() : null,
+                          handledCourses: role == 'faculty'
+                              ? selectedHandledCourseCodes
+                                  .map((code) {
+                                    // Registration dialog checkboxes accumulate SHORT course codes
+                                    // (BSP, BSC, BSIS, ...). Canonical wire format = FULL degree
+                                    // names (ALL_COURSES on server, kCourseShort keys on client).
+                                    // Convert short → full before sending to AuthNotifier / server.
+                                    for (final entry in handledCourseOptions) {
+                                      if (entry.key == code) return entry.value;
+                                    }
+                                    return code;
+                                  })
+                                  .toList()
+                              : null,
                         );
                         if (!ctx.mounted) return;
                         final err = result.errorMessage;
