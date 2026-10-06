@@ -76,7 +76,7 @@ class AuthService {
     if (messageCode == 'PENDING_ADMIN_APPROVAL') {
       return AuthFailure(
         AuthFailureCode.unknown,
-        errorMessage.isEmpty ? 'Faculty account is pending admin approval.' : errorMessage,
+        errorMessage.isEmpty ? 'Professor account is pending admin approval.' : errorMessage,
         messageCode: messageCode,
         email: email,
         username: username,
@@ -157,6 +157,7 @@ class AuthService {
     String? email,
     String? registrationOtp,
     String? registrationOtpRef,
+    List<String>? handledCourses,
   }) async {
     try {
       final res = await ApiService.register(
@@ -170,6 +171,7 @@ class AuthService {
         email: email,
         registrationOtp: registrationOtp,
         registrationOtpRef: registrationOtpRef,
+        handledCourses: handledCourses,
       );
       final messageCode = res['messageCode']?.toString();
       final meta = <String, dynamic>{
@@ -217,7 +219,7 @@ class AuthService {
         await logout();
         throw const AuthFailure(
           AuthFailureCode.unknown,
-          'Faculty account is pending admin approval',
+          'Professor account is pending admin approval',
           messageCode: 'PENDING_ADMIN_APPROVAL',
         );
       }

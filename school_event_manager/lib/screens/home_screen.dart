@@ -16,6 +16,17 @@ import '../models/event.dart';
 import '../models/attendance.dart';
 import '../config.dart';
 
+final currentUserProvider = FutureProvider<User?>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString('current_user');
+  if (raw == null || raw.trim().isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return User.fromJson(decoded);
+  } catch (_) {}
+  return null;
+});
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -30,9 +41,9 @@ class HomeScreen extends ConsumerWidget {
     }
     if (user.role == 'faculty') {
       if (!user.isApproved) {
-        return FacultyPendingApprovalScreen(user: user);
+        return ProfessorPendingApprovalScreen(user: user);
       }
-      return FacultyHomeScreen(user: user);
+      return ProfessorHomeScreen(user: user);
     }
     return StudentHomeScreen(user: user);
   }
@@ -67,6 +78,13 @@ const Map<String, String> kCourseShort = {
   'Bachelor of Science in Accountancy': 'BSA',
 };
 
+bool _eventVisibleForCourse(Event event, String studentCourse) {
+  if (event.allCourses) return true;
+  final sc = studentCourse.trim();
+  if (sc.isEmpty) return false;
+  return event.courses.any((c) => c.trim() == sc);
+}
+
 Future<Uint8List> _compressPosterBytes(Uint8List raw) async {
   // Passthrough: preserve original quality, dimensions, aspect ratio, and visual appearance.
   // No crop, no stretch, no resample. Size is enforced only via hard caps in the picker handler.
@@ -80,10 +98,11 @@ String _formatBytes(int bytes) {
 }
 
 class _AppDrawer extends StatelessWidget {
-  const _AppDrawer({required this.user, required this.ref});
+  const _AppDrawer({required this.user, required this.ref, this.onEditHandledCourses});
 
   final User user;
   final WidgetRef ref;
+  final VoidCallback? onEditHandledCourses;
 
   @override
   Widget build(BuildContext context) {
@@ -137,12 +156,24 @@ class _AppDrawer extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '${user.role.toUpperCase()} • ${(user.studentId.isNotEmpty && user.role == 'student') ? user.studentId : user.username}',
+                          '${(user.role == 'faculty' ? 'professor' : user.role).toUpperCase()} • ${(user.studentId.isNotEmpty && user.role == 'student') ? user.studentId : user.username}',
                           style: textTheme.bodySmall?.copyWith(
                                 color: Colors.white70,
                                 fontWeight: FontWeight.w600,
                               ),
                         ),
+                        if (user.role == 'faculty' && user.handledCourses.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Handles: ${user.handledCourses.map((c) => kCourseShort[c] ?? c).join(', ')}',
+                            style: textTheme.bodySmall?.copyWith(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -157,6 +188,16 @@ class _AppDrawer extends StatelessWidget {
                 onTap: () {
                   Navigator.pop(context);
                   _openStandaloneScanner(context, user);
+                },
+              ),
+            if (user.role == 'faculty' && onEditHandledCourses != null)
+              ListTile(
+                leading: const Icon(Icons.menu_book_outlined),
+                title: const Text('Handled Courses', style: TextStyle(fontWeight: FontWeight.w700)),
+                subtitle: Text(user.handledCourses.isEmpty ? 'Tap to configure' : user.handledCourses.map((c) => kCourseShort[c] ?? c).join(', ')),
+                onTap: () {
+                  Navigator.pop(context);
+                  onEditHandledCourses!();
                 },
               ),
             ListTile(
@@ -252,7 +293,7 @@ void _openSettingsSheet(BuildContext context, WidgetRef ref, User user) {
 void _showInstructionsDialog(BuildContext context, User user) {
   final title = switch (user.role) {
     'admin' => 'Admin Instructions',
-    'faculty' => 'Faculty Instructions',
+    'faculty' => 'Professor Instructions',
     _ => 'Student Instructions',
   };
   final text = switch (user.role) {
@@ -264,12 +305,12 @@ void _showInstructionsDialog(BuildContext context, User user) {
     'faculty' =>
       '1. Open Events tab and check active events.\n'
           '2. In Attendance, monitor your handled records.\n'
-          '3. During scanning, select faculty correctly for check-in/check-out.',
+          '3. During scanning, select professor correctly for check-in/check-out.',
     _ =>
       '1. Open Events tab to view event posters & details.\n'
           '2. Tap an event, then scroll to "Scan QR for Attendance" section.\n'
           '3. Quick access: open drawer (top-left ☰) → Scan QR anytime.\n'
-          '4. Select faculty for check-in/check-out during scan.\n'
+          '4. Select professor for check-in/check-out during scan.\n'
           '5. Review logs in My Attendance tab.',
   };
 
@@ -595,25 +636,146 @@ class StudentHomeScreen extends ConsumerWidget {
   }
 }
 
-class FacultyHomeScreen extends ConsumerWidget {
-  const FacultyHomeScreen({super.key, required this.user});
+class ProfessorHomeScreen extends ConsumerStatefulWidget {
+  const ProfessorHomeScreen({super.key, required this.user});
 
   final User user;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProfessorHomeScreen> createState() => _ProfessorHomeScreenState();
+}
+
+class _ProfessorHomeScreenState extends ConsumerState<ProfessorHomeScreen> {
+  bool _checkedSetup = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureHandledCoursesConfigured());
+  }
+
+  Future<void> _ensureHandledCoursesConfigured() async {
+    if (_checkedSetup) return;
+    _checkedSetup = true;
+    try {
+      final me = await ApiService.getMe();
+      final parsed = User.fromJson(me);
+      final needsSetup = parsed.role == 'faculty' && parsed.handledCourses.isEmpty;
+      if (!mounted) return;
+      if (needsSetup || widget.user.handledCourses.isEmpty) {
+        await _promptHandledCoursesSetup(force: needsSetup);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      if (widget.user.handledCourses.isEmpty) {
+        await _promptHandledCoursesSetup(force: true);
+      }
+    }
+  }
+
+  Future<void> _promptHandledCoursesSetup({required bool force}) async {
+    final initial = <String>{...widget.user.handledCourses};
+    final picked = await showDialog<Set<String>>(
+      context: context,
+      barrierDismissible: !force,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text(force ? 'Choose your handled courses' : 'Edit handled courses'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 520),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    force
+                        ? 'Before you continue, select the course(s) you handle. This determines which events, students, and attendance records you see.'
+                        : 'Update the courses you handle. This selection filters events, students, and attendance throughout the system.',
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 12),
+                  ...kCoursesList.map((course) {
+                    final selected = initial.contains(course);
+                    final short = kCourseShort[course] ?? course;
+                    return CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      secondary: Chip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(short, style: const TextStyle(fontSize: 11)),
+                      ),
+                      title: Text(course, style: const TextStyle(fontSize: 13)),
+                      value: selected,
+                      onChanged: (v) {
+                        setDialog(() {
+                          if (v == true) {
+                            initial.add(course);
+                          } else {
+                            initial.remove(course);
+                          }
+                        });
+                      },
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            if (!force) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: initial.isEmpty
+                  ? null
+                  : () => Navigator.pop(ctx, <String>{...initial}),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || picked.isEmpty) return;
+    try {
+      final updated = await ApiService.updateUser(
+        widget.user.id,
+        handledCourses: picked.toList(),
+      );
+      final updatedUser = updated['user'] is Map<String, dynamic>
+          ? User.fromJson(updated['user'] as Map<String, dynamic>)
+          : widget.user.copyWith(handledCourses: picked.toList());
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('current_user', jsonEncode(updatedUser.toJson()));
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Handled courses saved')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Save failed: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final refreshed = ref.watch(currentUserProvider).valueOrNull;
+    final effectiveUser = (widget.user.handledCourses.isEmpty && refreshed != null)
+        ? refreshed
+        : widget.user;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        drawer: _AppDrawer(user: user, ref: ref),
+        drawer: _AppDrawer(user: effectiveUser, ref: ref, onEditHandledCourses: _checkedSetup && mounted ? () => _promptHandledCoursesSetup(force: false) : null),
         extendBody: false,
         appBar: AppBar(
           title: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Faculty'),
+              const Text('Professor'),
               Text(
-                user.fullName.isEmpty ? user.username : user.fullName,
+                effectiveUser.fullName.isEmpty ? effectiveUser.username : effectiveUser.fullName,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
               ),
             ],
@@ -640,8 +802,8 @@ class FacultyHomeScreen extends ConsumerWidget {
         body: _TabBackground(
           child: TabBarView(
             children: [
-              const FacultyEventsTab(),
-              FacultyAttendanceTab(user: user),
+              ProfessorEventsTab(handledCourses: effectiveUser.handledCourses),
+              ProfessorAttendanceTab(user: effectiveUser),
             ],
           ),
         ),
@@ -650,8 +812,8 @@ class FacultyHomeScreen extends ConsumerWidget {
   }
 }
 
-class FacultyPendingApprovalScreen extends ConsumerWidget {
-  const FacultyPendingApprovalScreen({super.key, required this.user});
+class ProfessorPendingApprovalScreen extends ConsumerWidget {
+  const ProfessorPendingApprovalScreen({super.key, required this.user});
 
   final User user;
 
@@ -660,7 +822,7 @@ class FacultyPendingApprovalScreen extends ConsumerWidget {
     return Scaffold(
       extendBody: false,
       appBar: AppBar(
-        title: const Text('Faculty Verification'),
+        title: const Text('Professor Verification'),
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
@@ -680,7 +842,7 @@ class FacultyPendingApprovalScreen extends ConsumerWidget {
                   const Icon(Icons.verified_user_outlined, size: 56),
                   const SizedBox(height: 12),
                   const Text(
-                    'Your faculty account is waiting for admin approval.',
+                    'Your professor account is waiting for admin approval.',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
@@ -730,8 +892,10 @@ class AdminEventsTab extends ConsumerStatefulWidget {
   ConsumerState<AdminEventsTab> createState() => _AdminEventsTabState();
 }
 
-class FacultyEventsTab extends ConsumerWidget {
-  const FacultyEventsTab({super.key});
+class ProfessorEventsTab extends ConsumerWidget {
+  const ProfessorEventsTab({super.key, this.handledCourses = const []});
+
+  final List<String> handledCourses;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -740,7 +904,13 @@ class FacultyEventsTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (events) {
-        final sorted = [...events]..sort((a, b) => b.date.compareTo(a.date));
+        final allowed = handledCourses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
+        final filtered = events.where((e) {
+          if (allowed.isEmpty) return false;
+          if (e.allCourses) return true;
+          return e.courses.any((c) => allowed.contains(c.trim()));
+        }).toList();
+        final sorted = [...filtered]..sort((a, b) => b.date.compareTo(a.date));
         return RefreshIndicator(
           onRefresh: () => ref.read(eventProvider.notifier).loadEvents(),
           child: sorted.isEmpty
@@ -865,7 +1035,6 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                           final scheme = Theme.of(context).colorScheme;
                           final courseCodes = event.courses.map((c) => kCourseShort[c] ?? c).toList();
                           final shownCodes = courseCodes.take(3).toList();
-                          final remainingCourses = courseCodes.length - shownCodes.length;
                           return Card(
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
@@ -917,7 +1086,9 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                                               label: const Text('Sub-event', style: TextStyle(fontSize: 11)),
                                               onSelected: null,
                                             ),
-                                          if (event.allCourses)
+                                          if (event.allCourses &&
+                                              event.courses.length == kCoursesList.length &&
+                                              event.courses.toSet().containsAll(kCoursesList))
                                             Chip(
                                               visualDensity: VisualDensity.compact,
                                               label: const Text('All Courses', style: TextStyle(fontSize: 11)),
@@ -928,10 +1099,10 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                                                   visualDensity: VisualDensity.compact,
                                                   label: Text(c, style: const TextStyle(fontSize: 11)),
                                                 )),
-                                            if (remainingCourses > 0)
+                                            if (courseCodes.length - shownCodes.length > 0)
                                               Chip(
                                                 visualDensity: VisualDensity.compact,
-                                                label: Text('+$remainingCourses more', style: const TextStyle(fontSize: 11)),
+                                                label: Text('+${courseCodes.length - shownCodes.length} more', style: const TextStyle(fontSize: 11)),
                                               ),
                                           ],
                                         ],
@@ -994,9 +1165,7 @@ Future<void> _showEventDialog(
   String posterDataUrl = existing?.posterImageUrl ?? '';
   bool busyPicking = false;
   bool allCourses = existing?.allCourses ?? true;
-  Set<String> pickedCourses = allCourses
-      ? <String>{}
-      : (existing?.courses ?? <String>[]).toSet();
+  Set<String> pickedCourses = (existing?.courses ?? <String>[]).toSet();
   final scrollController = ScrollController();
   final imagePicker = ImagePicker();
   if (posterDataUrl.trim().isNotEmpty && posterDataUrl.startsWith('data:')) {
@@ -2006,7 +2175,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                             ),
                             title: Text(u.fullName.isEmpty ? u.username : u.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
                             subtitle: Text(
-                              '${u.role.toUpperCase()} • ${u.username}${u.role == 'faculty' && !u.isApproved ? ' • Pending approval' : ''}',
+                              '${(u.role == 'faculty' ? 'professor' : u.role).toUpperCase()} • ${u.username}${u.role == 'faculty' && !u.isApproved ? ' • Pending approval' : ''}',
                               style: const TextStyle(color: Colors.black54),
                             ),
                             trailing: PopupMenuButton<String>(
@@ -2014,11 +2183,23 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                               onSelected: (value) async {
                                 if (value == 'approve') {
                                   try {
-                                    await ApiService.updateUser(u.id, isApproved: true);
+                                    await ApiService.updateUser(
+                                      u.id,
+                                      isApproved: true,
+                                      isVerified: true,
+                                    );
                                     if (!mounted || !context.mounted) return;
                                     setState(() => _future = _loadUsers());
+                                    final display = u.fullName.isEmpty ? u.username : u.fullName;
+                                    final noCourses = (u.handledCourses.isEmpty);
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('${u.username} verified')),
+                                      SnackBar(
+                                        content: Text(
+                                          noCourses
+                                              ? '$display was approved. On their first sign-in, the professor will be prompted to pick the courses they handle.'
+                                              : '$display was approved — the professor can now sign in.',
+                                        ),
+                                      ),
                                     );
                                   } catch (e) {
                                     if (!context.mounted) return;
@@ -2050,7 +2231,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                                 if (u.role == 'faculty' && !u.isApproved)
                                   const PopupMenuItem<String>(
                                     value: 'approve',
-                                    child: Text('Approve faculty'),
+                                    child: Text('Approve professor'),
                                   ),
                                 const PopupMenuItem<String>(
                                   value: 'edit',
@@ -2091,30 +2272,15 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
     final passwordController = TextEditingController();
     final fullNameController = TextEditingController();
     final studentIdController = TextEditingController();
-    const courses = [
-      'Bachelor of Science in Criminology',
-      'Bachelor of Science in Information System',
-      'Bachelor of Science in Psychology',
-      'Bachelor of Science in Accounting Information System',
-      'Bachelor of Secondary Education',
-      'Bachelor of Science in Accountancy',
-    ];
-    const courseCodes = {
-      'Bachelor of Science in Criminology': 'BSC',
-      'Bachelor of Science in Information System': 'BSIS',
-      'Bachelor of Science in Psychology': 'BSP',
-      'Bachelor of Science in Accounting Information System': 'BSAIS',
-      'Bachelor of Secondary Education': 'BSED',
-      'Bachelor of Science in Accountancy': 'BSA',
-    };
     String? selectedCourse;
     int? selectedYear;
     String? selectedSection;
     String role = 'student';
+    Set<String> handledCourses = <String>{};
 
     List<String> buildSections() {
       if (selectedCourse == null || selectedYear == null) return const [];
-      final code = courseCodes[selectedCourse] ?? 'BS';
+      final code = kCourseShort[selectedCourse] ?? 'BS';
       return List<String>.generate(
         26,
         (i) => '$code $selectedYear${String.fromCharCode(65 + i)}',
@@ -2126,83 +2292,173 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) => AlertDialog(
           title: const Text('Add User'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: usernameController,
-                decoration: const InputDecoration(labelText: 'Username'),
-              ),
-              TextField(
-                controller: passwordController,
-                decoration: const InputDecoration(labelText: 'Password'),
-                obscureText: true,
-              ),
-              TextField(
-                controller: fullNameController,
-                decoration: const InputDecoration(labelText: 'Full name'),
-              ),
-              if (role == 'student')
-                TextField(
-                  controller: studentIdController,
-                  decoration: const InputDecoration(labelText: 'Student ID'),
-                ),
-              if (role == 'student')
-                DropdownButtonFormField<String>(
-                  initialValue: selectedCourse,
-                  decoration: const InputDecoration(labelText: 'Course'),
-                  hint: const Text('Select course'),
-                  items: courses.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (v) => setStateDialog(() {
-                    selectedCourse = v;
-                    selectedSection = null;
-                  }),
-                ),
-              if (role == 'student')
-                DropdownButtonFormField<int>(
-                  initialValue: selectedYear,
-                  decoration: const InputDecoration(labelText: 'Year Level'),
-                  hint: const Text('Select year'),
-                  items: const [
-                    DropdownMenuItem(value: 1, child: Text('1st Year')),
-                    DropdownMenuItem(value: 2, child: Text('2nd Year')),
-                    DropdownMenuItem(value: 3, child: Text('3rd Year')),
-                    DropdownMenuItem(value: 4, child: Text('4th Year')),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 700),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: usernameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Username',
+                      prefixIcon: Icon(Icons.person),
+                    ),
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: passwordController,
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: Icon(Icons.lock),
+                    ),
+                    obscureText: true,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: fullNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Full name',
+                      prefixIcon: Icon(Icons.badge),
+                    ),
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 8),
+                  if (role == 'student')
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: TextField(
+                        controller: studentIdController,
+                        decoration: const InputDecoration(
+                          labelText: 'Student ID',
+                          prefixIcon: Icon(Icons.numbers),
+                        ),
+                        textInputAction: TextInputAction.next,
+                      ),
+                    ),
+                  if (role == 'student')
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: selectedCourse,
+                        decoration: const InputDecoration(
+                          labelText: 'Course',
+                          prefixIcon: Icon(Icons.school),
+                        ),
+                        hint: const Text('Select course'),
+                        items: kCoursesList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                        onChanged: (v) => setStateDialog(() {
+                          selectedCourse = v;
+                          selectedSection = null;
+                        }),
+                      ),
+                    ),
+                  if (role == 'student')
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: DropdownButtonFormField<int>(
+                        isExpanded: true,
+                        initialValue: selectedYear,
+                        decoration: const InputDecoration(
+                          labelText: 'Year Level',
+                          prefixIcon: Icon(Icons.calendar_month),
+                        ),
+                        hint: const Text('Select year'),
+                        items: const [
+                          DropdownMenuItem(value: 1, child: Text('1st Year')),
+                          DropdownMenuItem(value: 2, child: Text('2nd Year')),
+                          DropdownMenuItem(value: 3, child: Text('3rd Year')),
+                          DropdownMenuItem(value: 4, child: Text('4th Year')),
+                        ],
+                        onChanged: (v) => setStateDialog(() {
+                          selectedYear = v;
+                          selectedSection = null;
+                        }),
+                      ),
+                    ),
+                  if (role == 'student')
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: selectedSection,
+                        decoration: const InputDecoration(
+                          labelText: 'Section',
+                          prefixIcon: Icon(Icons.group),
+                        ),
+                        hint: const Text('Select section'),
+                        items: buildSections().map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                        onChanged: (v) => setStateDialog(() => selectedSection = v),
+                      ),
+                    ),
+                  DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: role,
+                    decoration: const InputDecoration(
+                      labelText: 'Role',
+                      prefixIcon: Icon(Icons.admin_panel_settings),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'student', child: Text('Student')),
+                      DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                      DropdownMenuItem(value: 'faculty', child: Text('Professor')),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setStateDialog(() {
+                        role = value;
+                        if (role != 'student') {
+                          selectedCourse = null;
+                          selectedYear = null;
+                          selectedSection = null;
+                          studentIdController.clear();
+                        }
+                      });
+                    },
+                  ),
+                  if (role == 'faculty') ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Handled Courses',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Select one or more courses this professor teaches. Events, students, and attendance will be filtered by these.',
+                      style: TextStyle(color: Colors.black54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    ...kCoursesList.map((course) {
+                      final selected = handledCourses.contains(course);
+                      final short = kCourseShort[course] ?? course;
+                      return CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        secondary: Chip(
+                          visualDensity: VisualDensity.compact,
+                          label: Text(short, style: const TextStyle(fontSize: 11)),
+                        ),
+                        title: Text(course, style: const TextStyle(fontSize: 13)),
+                        value: selected,
+                        onChanged: (v) {
+                          setStateDialog(() {
+                            if (v == true) {
+                              handledCourses.add(course);
+                            } else {
+                              handledCourses.remove(course);
+                            }
+                          });
+                        },
+                      );
+                    }),
                   ],
-                  onChanged: (v) => setStateDialog(() {
-                    selectedYear = v;
-                    selectedSection = null;
-                  }),
-                ),
-              if (role == 'student')
-                DropdownButtonFormField<String>(
-                  initialValue: selectedSection,
-                  decoration: const InputDecoration(labelText: 'Section'),
-                  hint: const Text('Select section'),
-                  items: buildSections().map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                  onChanged: (v) => setStateDialog(() => selectedSection = v),
-                ),
-              DropdownButtonFormField<String>(
-                initialValue: role,
-                decoration: const InputDecoration(labelText: 'Role'),
-                items: const [
-                  DropdownMenuItem(value: 'student', child: Text('Student')),
-                  DropdownMenuItem(value: 'admin', child: Text('Admin')),
-                  DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
                 ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setStateDialog(() {
-                    role = value;
-                    if (role != 'student') {
-                      selectedCourse = null;
-                      selectedYear = null;
-                      selectedSection = null;
-                    }
-                  });
-                },
               ),
-            ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
@@ -2220,11 +2476,27 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   }
                   return;
                 }
-                if (role == 'student' &&
-                    (fullName.isEmpty || studentId.isEmpty || selectedCourse == null || selectedYear == null || selectedSection == null)) {
+                if (fullName.isEmpty) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Enter full name, student ID, course, year, and section')),
+                      const SnackBar(content: Text('Enter full name')),
+                    );
+                  }
+                  return;
+                }
+                if (role == 'student' &&
+                    (studentId.isEmpty || selectedCourse == null || selectedYear == null || selectedSection == null)) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Enter student ID, course, year, and section')),
+                    );
+                  }
+                  return;
+                }
+                if (role == 'faculty' && handledCourses.isEmpty) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Select at least one handled course for the professor')),
                     );
                   }
                   return;
@@ -2238,6 +2510,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     studentId: role == 'student' ? studentId : null,
                     course: role == 'student' ? selectedCourse : null,
                     section: role == 'student' ? selectedSection : null,
+                    handledCourses: role == 'faculty' ? handledCourses.toList() : null,
                   );
                   if (!mounted || !context.mounted) return;
                   setState(() => _future = _loadUsers());
@@ -2368,6 +2641,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
     String role = user.role;
     bool obscurePassword = true;
     bool isApproved = user.isApproved;
+    Set<String> handledCourses = <String>{...user.handledCourses};
 
     await showDialog<void>(
       context: context,
@@ -2409,7 +2683,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   items: const [
                     DropdownMenuItem(value: 'student', child: Text('Student')),
                     DropdownMenuItem(value: 'admin', child: Text('Admin')),
-                    DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
+                    DropdownMenuItem(value: 'faculty', child: Text('Professor')),
                   ],
                   onChanged: (value) {
                     if (value == null) return;
@@ -2436,12 +2710,47 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   decoration: const InputDecoration(labelText: 'Section'),
                 ),
                 if (role == 'faculty') ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Handled Courses',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Select one or more courses this professor teaches. Events, students, and attendance will be filtered by these.',
+                    style: TextStyle(color: Colors.black54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  ...kCoursesList.map((course) {
+                    final selected = handledCourses.contains(course);
+                    final short = kCourseShort[course] ?? course;
+                    return CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      secondary: Chip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(short, style: const TextStyle(fontSize: 11)),
+                      ),
+                      title: Text(course, style: const TextStyle(fontSize: 13)),
+                      value: selected,
+                      onChanged: (v) {
+                        setStateDialog(() {
+                          if (v == true) {
+                            handledCourses.add(course);
+                          } else {
+                            handledCourses.remove(course);
+                          }
+                        });
+                      },
+                    );
+                  }),
                   const SizedBox(height: 8),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Account approved (can sign in)'),
                     subtitle: isApproved
-                        ? const Text('Faculty can log in immediately after saving.')
+                        ? const Text('Professor can log in immediately after saving.')
                         : const Text('A pending approval error will appear on login.'),
                     value: isApproved,
                     onChanged: (v) => setStateDialog(() => isApproved = v),
@@ -2480,6 +2789,13 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   );
                   return;
                 }
+                if (role == 'faculty' && handledCourses.isEmpty) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Select at least one handled course for the professor')),
+                  );
+                  return;
+                }
                 if (nextPassword.isNotEmpty && nextPassword.length < 6) {
                   if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -2500,6 +2816,8 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     course: nextCourse,
                     section: nextSection,
                     isApproved: role == 'faculty' ? isApproved : true,
+                    isVerified: role == 'faculty' ? isApproved : true,
+                    handledCourses: role == 'faculty' ? handledCourses.toList() : <String>[],
                   );
                   if (!context.mounted) return;
                   Navigator.pop(dialogContext);
@@ -2509,7 +2827,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                       content: Text(
                         role == 'faculty'
                             ? isApproved
-                                ? 'User updated and approved — faculty can now sign in.'
+                                ? 'User updated and approved — professor can now sign in.'
                                 : 'User updated — account pending approval.'
                             : 'User updated',
                       ),
@@ -2751,7 +3069,7 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
       _pickingFaculty = false;
       if (pickedFacultyId == null) {
         setState(() {
-          _message = 'Select a faculty to continue.';
+          _message = 'Select a professor to continue.';
         });
         return;
       }
@@ -2763,6 +3081,7 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
             studentName,
             widget.user.id,
             facultyId: pickedFacultyId,
+            studentCourse: widget.user.course,
           );
 
       setState(() {
@@ -2797,12 +3116,28 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
     }).cast<AttendanceRecord?>().firstWhere((r) => r != null, orElse: () => null);
     final stage = open == null ? 'Check-in' : 'Check-out';
 
+    final eventsAsync = ref.read(eventProvider);
+    final events = eventsAsync.valueOrNull ?? const <Event>[];
+    final matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    final eventCourses = matchingEvent?.courses ?? const <String>[];
+    final eventAllCourses = matchingEvent?.allCourses ?? true;
+
     final rawFaculty = await ApiService.getFaculty();
-    final faculty = rawFaculty.map((u) => User.fromJson(u)).toList();
+    final allFaculty = rawFaculty.map((u) => User.fromJson(u)).toList();
+    final faculty = allFaculty.where((f) {
+      if (eventAllCourses == true) return true;
+      final profCourses = f.handledCourses.toSet();
+      if (profCourses.isEmpty) return false;
+      if (eventCourses.isEmpty) return true;
+      for (final ec in eventCourses) {
+        if (profCourses.contains(ec)) return true;
+      }
+      return false;
+    }).toList();
     if (faculty.isEmpty) {
       if (mounted) {
         setState(() {
-          _message = 'No faculty accounts found. Ask admin to create faculty accounts.';
+          _message = 'No eligible professors for this event. Ask admin to assign handled courses.';
         });
       }
       return null;
@@ -2814,7 +3149,7 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text('Choose faculty for $stage'),
+          title: Text('Choose professor for $stage'),
           content: DropdownButtonFormField<String>(
             initialValue: selectedId,
             items: faculty
@@ -2930,7 +3265,25 @@ class StudentEventsTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (events) {
-        final rootEvents = events.where((e) => e.status != 'draft' && e.parentId == null).toList()
+        final studentCourse = user.course;
+        final visible = events
+            .where((e) => e.status != 'draft' && _eventVisibleForCourse(e, studentCourse))
+            .toList();
+        final visibleIds = visible.map((e) => e.id).toSet();
+        final subEventParentIds = visible
+            .where((e) => e.parentId != null)
+            .map((e) => e.parentId!)
+            .toSet();
+        final eventsForDisplay = events.where((e) {
+          if (e.status == 'draft') return false;
+          if (e.parentId != null) return visibleIds.contains(e.id);
+          if (e.isCategory) {
+            if (visibleIds.contains(e.id)) return true;
+            return subEventParentIds.contains(e.id);
+          }
+          return visibleIds.contains(e.id);
+        }).toList();
+        final rootEvents = eventsForDisplay.where((e) => e.parentId == null).toList()
           ..sort((a, b) => b.date.compareTo(a.date));
         final categories = rootEvents.where((e) => e.isCategory).toList();
         final regular = rootEvents.where((e) => !e.isCategory).toList();
@@ -3024,8 +3377,12 @@ class _CategoryMenuScreen extends ConsumerWidget {
     final posterBytes = _decodePoster();
     final textTheme = Theme.of(context).textTheme;
     final eventsState = ref.watch(eventProvider);
+    final studentCourse = user.course;
     final subEvents = eventsState.valueOrNull
-            ?.where((e) => e.parentId == category.id && e.status != 'draft')
+            ?.where((e) =>
+                e.parentId == category.id &&
+                e.status != 'draft' &&
+                _eventVisibleForCourse(e, studentCourse))
             .toList()
       ?..sort((a, b) => b.date.compareTo(a.date));
     return Scaffold(
@@ -3814,7 +4171,7 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
       _pickingFaculty = false;
       if (pickedFacultyId == null) {
         setState(() {
-          _scanMessage = 'Select a faculty to continue.';
+          _scanMessage = 'Select a professor to continue.';
         });
         return;
       }
@@ -3826,6 +4183,7 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
             studentName,
             widget.user.id,
             facultyId: pickedFacultyId,
+            studentCourse: widget.user.course,
           );
 
       setState(() {
@@ -3857,12 +4215,28 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
     }).cast<AttendanceRecord?>().firstWhere((r) => r != null, orElse: () => null);
     final stage = open == null ? 'Check-in' : 'Check-out';
 
+    final eventsAsync = ref.read(eventProvider);
+    final events = eventsAsync.valueOrNull ?? const <Event>[];
+    final matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    final eventCourses = matchingEvent?.courses ?? const <String>[];
+    final eventAllCourses = matchingEvent?.allCourses ?? true;
+
     final rawFaculty = await ApiService.getFaculty();
-    final faculty = rawFaculty.map((u) => User.fromJson(u)).toList();
+    final allFaculty = rawFaculty.map((u) => User.fromJson(u)).toList();
+    final faculty = allFaculty.where((f) {
+      if (eventAllCourses == true) return true;
+      final profCourses = f.handledCourses.toSet();
+      if (profCourses.isEmpty) return false;
+      if (eventCourses.isEmpty) return true;
+      for (final ec in eventCourses) {
+        if (profCourses.contains(ec)) return true;
+      }
+      return false;
+    }).toList();
     if (faculty.isEmpty) {
       if (mounted) {
         setState(() {
-          _scanMessage = 'No faculty accounts found. Ask admin to create faculty accounts.';
+          _scanMessage = 'No eligible professors for this event. Ask admin to assign handled courses.';
         });
       }
       return null;
@@ -3874,7 +4248,7 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
       context: ctx,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text('Choose faculty for $stage'),
+          title: Text('Choose professor for $stage'),
           content: DropdownButtonFormField<String>(
             initialValue: selectedId,
             items: faculty
@@ -3946,16 +4320,16 @@ class _StandaloneQrScannerScreenState extends ConsumerState<_StandaloneQrScanner
   }
 }
 
-class FacultyAttendanceTab extends ConsumerStatefulWidget {
-  const FacultyAttendanceTab({super.key, required this.user});
+class ProfessorAttendanceTab extends ConsumerStatefulWidget {
+  const ProfessorAttendanceTab({super.key, required this.user});
 
   final User user;
 
   @override
-  ConsumerState<FacultyAttendanceTab> createState() => _FacultyAttendanceTabState();
+  ConsumerState<ProfessorAttendanceTab> createState() => _ProfessorAttendanceTabState();
 }
 
-class _FacultyAttendanceTabState extends ConsumerState<FacultyAttendanceTab> {
+class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab> {
   String _courseFilter = 'All';
 
   @override
@@ -3965,18 +4339,30 @@ class _FacultyAttendanceTabState extends ConsumerState<FacultyAttendanceTab> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (attendance) {
-        final mineByFaculty = attendance
+        final allowedCourses = widget.user.handledCourses.toSet();
+        final hasCourses = allowedCourses.isNotEmpty;
+        final validFilters = {'All', ...allowedCourses};
+        final effectiveFilter =
+            validFilters.contains(_courseFilter) ? _courseFilter : 'All';
+        if (effectiveFilter != _courseFilter) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _courseFilter = effectiveFilter);
+          });
+        }
+        final scopedToCourses = attendance.where((r) {
+          if (!hasCourses) return false;
+          final course = r.studentCourse.trim();
+          return course.isEmpty ? false : allowedCourses.contains(course);
+        }).toList();
+        final mineByOwnership = attendance
             .where((r) => r.checkedOutByFacultyId == widget.user.id || (r.checkOutAt == null && r.checkedInByFacultyId == widget.user.id))
+            .where((r) => !scopedToCourses.contains(r))
             .toList();
-        final courses = mineByFaculty
-            .map((r) => r.studentCourse)
-            .where((c) => c.trim().isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-        final filtered = _courseFilter == 'All'
-            ? mineByFaculty
-            : mineByFaculty.where((r) => r.studentCourse == _courseFilter).toList();
+        final visible = [...scopedToCourses, ...mineByOwnership];
+        final courses = allowedCourses.toList()..sort();
+        final filtered = effectiveFilter == 'All'
+            ? visible
+            : visible.where((r) => r.studentCourse == effectiveFilter).toList();
         final sorted = [...filtered]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
         return RefreshIndicator(
@@ -3991,7 +4377,8 @@ class _FacultyAttendanceTabState extends ConsumerState<FacultyAttendanceTab> {
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          initialValue: _courseFilter,
+                          key: ValueKey(effectiveFilter),
+                          initialValue: effectiveFilter,
                           decoration: const InputDecoration(labelText: 'Course'),
                           items: [
                             const DropdownMenuItem(value: 'All', child: Text('All')),
@@ -4008,12 +4395,23 @@ class _FacultyAttendanceTabState extends ConsumerState<FacultyAttendanceTab> {
                 ),
               ),
               const SizedBox(height: 12),
-              if (sorted.isEmpty)
+              if (!hasCourses)
+                Card(
+                  color: const Color(0xFFFFF4E6),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Text(
+                      'No handled courses set yet. Use the drawer menu "Handled Courses" to select the courses you teach so attendance can appear here.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: const Color(0xFF92400E)),
+                    ),
+                  ),
+                )
+              else if (sorted.isEmpty)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Text(
-                      'No attendance yet',
+                      'No attendance yet for ${courses.join(', ')}.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54),
                     ),
                   ),

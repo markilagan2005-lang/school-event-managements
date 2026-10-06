@@ -58,6 +58,34 @@ const COURSE_CODES = {
 };
 const ALL_COURSES_SET = new Set(ALL_COURSES);
 
+const normalizeHandledCourses = (value) => {
+  if (Array.isArray(value)) {
+    const seen = new Set();
+    const out = [];
+    for (const raw of value) {
+      const s = String(raw || '').trim();
+      if (!s) continue;
+      if (!ALL_COURSES_SET.has(s)) continue;
+      if (seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+    return out;
+  }
+  return [];
+};
+
+const coursesIntersect = (aCourses, bCourses) => {
+  const a = Array.isArray(aCourses) ? aCourses : [];
+  const b = Array.isArray(bCourses) ? bCourses : [];
+  if (a.length === 0 || b.length === 0) return false;
+  const bSet = new Set(b);
+  for (const c of a) {
+    if (bSet.has(c)) return true;
+  }
+  return false;
+};
+
 const normalizeCourses = (value, { allowEmpty = false } = {}) => {
   if (Array.isArray(value)) {
     const seen = new Set();
@@ -77,7 +105,6 @@ const normalizeCourses = (value, { allowEmpty = false } = {}) => {
 
 const eventIsVisibleToStudent = (event, studentCourse) => {
   if (!event || !event.id) return false;
-  if (event.isCategory === true) return true;
   if (event.allCourses === true) return true;
   const sc = studentCourse ? String(studentCourse).trim() : '';
   if (!sc) return false;
@@ -87,7 +114,9 @@ const eventIsVisibleToStudent = (event, studentCourse) => {
 
 const eventApplyDefaults = (e) => {
   if (e.allCourses !== true && e.allCourses !== false) e.allCourses = true;
-  if (!Array.isArray(e.courses)) e.courses = [...ALL_COURSES];
+  if (!Array.isArray(e.courses)) {
+    e.courses = e.allCourses === false ? [] : [...ALL_COURSES];
+  }
   if (e.isCategory !== true && e.isCategory !== false) e.isCategory = false;
   if (e.parentId !== null && (typeof e.parentId !== 'string' || !e.parentId)) e.parentId = null;
   if (!e.parentId) e.parentId = null;
@@ -224,7 +253,7 @@ const sendViaBrevoApi = async ({ toEmail, otp, username }) => {
   }
 };
 
-const formatAppName = () => 'School Event Manager';
+function formatAppName() { return 'School Event Manager'; }
 
 const sendEmailCode = async ({ toEmail, otp, username }) => {
   if (!toEmail) return { ok: false, reason: 'no-recipient' };
@@ -482,10 +511,10 @@ const hasDuplicateUserId = (users, userId, exceptUserId = null) => {
   if (!normalized) return false;
   return users.some((u) => u.id !== exceptUserId && String(u.id) === normalized);
 };
-const isFacultyApproved = (user) => {
+function isFacultyApproved(user) {
   if (!user || user.role !== 'faculty') return true;
-  return user.isApproved === true;
-};
+  return user.isApproved === true && user.isVerified === true;
+}
 
 // Password Hashing and Validation
 const hashPassword = async (password) => {
@@ -516,6 +545,7 @@ const toPublicUser = (u) => ({
   section: u.section || '',
   isApproved: isFacultyApproved(u),
   isVerified: u.isVerified || false,
+  handledCourses: Array.isArray(u.handledCourses) ? [...u.handledCourses] : [],
 });
 
 const ensureDefaultAdmin = async () => {
@@ -538,6 +568,7 @@ const ensureDefaultAdmin = async () => {
       section: '',
       isApproved: true,
       isVerified: true,
+      handledCourses: [],
     });
     changed = true;
   } else {
@@ -565,13 +596,17 @@ const ensureDefaultAdmin = async () => {
       existing.isVerified = true;
       changed = true;
     }
+    if (!Array.isArray(existing.handledCourses)) {
+      existing.handledCourses = [];
+      changed = true;
+    }
   }
 
   if (changed) saveData(usersFile, users);
 };
 
 // Auth middleware
-const authenticateToken = (req, res, next) => {
+function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Access token required' });
@@ -582,21 +617,22 @@ const authenticateToken = (req, res, next) => {
     const account = users.find((u) => u.id === user.id);
     if (!account) return res.status(401).json({ error: 'Account not found' });
     if (!isFacultyApproved(account)) {
-      return res.status(403).json({ error: 'Faculty account is pending admin approval' });
+      return res.status(403).json({ error: 'Professor account is pending admin approval' });
     }
     req.user = {
       id: account.id,
       username: account.username,
       role: account.role,
+      handledCourses: Array.isArray(account.handledCourses) ? [...account.handledCourses] : [],
     };
     next();
   });
-};
+}
 
-const requireAdmin = (req, res, next) => {
+function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
-};
+}
 
 // Routes
 
@@ -617,11 +653,11 @@ app.get('/', (req, res) => {
 // Register
 app.post('/api/register', async (req, res) => {
   const { username, password, role, fullName, studentId, course, section, email,
-          registrationOtp, registrationOtpRef } = req.body;
+          registrationOtp, registrationOtpRef, handledCourses } = req.body;
   const users = loadData(usersFile);
 
   if (!['student', 'faculty'].includes(role)) {
-    return res.status(400).json({ error: 'Public registration is only for student/faculty' });
+    return res.status(400).json({ error: 'Public registration is only available for Student and Professor accounts.' });
   }
 
   const identifier = role === 'student' ? email : username;
@@ -708,6 +744,7 @@ app.post('/api/register', async (req, res) => {
     // STUDENT email was ALREADY PROVEN via pre-registration OTP before we got here.
     // So set isVerified=true IMMEDIATELY — no second verification gate on login.
     isVerified: true,
+    handledCourses: role === 'faculty' ? normalizeHandledCourses(handledCourses) : [],
   };
 
   if (role === 'faculty') {
@@ -723,7 +760,7 @@ app.post('/api/register', async (req, res) => {
   if (newUser.role === 'faculty') {
     return res.json({
       user: toPublicUser(newUser),
-      message: 'Faculty registration submitted. Wait for admin verification before login.',
+      message: 'Professor registration submitted. Wait for admin verification before login.',
     });
   }
 
@@ -1068,6 +1105,7 @@ app.post('/api/login', async (req, res) => {
       section: '',
       isApproved: true,
       isVerified: true,
+      handledCourses: [],
     });
     saveData(usersFile, users);
     user = findUserByHandle(users, username, mode);
@@ -1080,7 +1118,7 @@ app.post('/api/login', async (req, res) => {
     else if (mode === 'username') msg = 'Username not found';
     return res.status(401).json({ error: msg });
   }
-  if (user.isVerified !== true) {
+  if (user.isVerified !== true && user.role !== 'faculty') {
     // For STUDENT accounts: keep email-verification gate open. Try to auto-generate
     // a fresh OTP + auto-send if (a) none is pending or (b) previous one expired, so the
     // UI can present the OTP dialog to the user without an extra resend tap.
@@ -1120,10 +1158,8 @@ app.post('/api/login', async (req, res) => {
       }
     }
     return res.status(403).json({
-      error: user.role === 'faculty'
-        ? 'Account pending admin approval'
-        : 'Email not verified',
-      messageCode: user.role === 'student' ? 'EMAIL_VERIFICATION_REQUIRED' : 'PENDING_ADMIN_APPROVAL',
+      error: 'Email not verified',
+      messageCode: 'EMAIL_VERIFICATION_REQUIRED',
       username: user.username,
       email: user.email || '',
     });
@@ -1131,7 +1167,12 @@ app.post('/api/login', async (req, res) => {
   const passwordMatch = await comparePassword(password, user.password);
   if (!passwordMatch) return res.status(401).json({ error: 'Wrong password' });
   if (!isFacultyApproved(user)) {
-    return res.status(403).json({ error: 'Faculty account is pending admin approval' });
+    return res.status(403).json({
+      error: 'Your professor account is still pending approval by an administrator. You will be able to sign in once the admin approves your registration.',
+      messageCode: 'PENDING_ADMIN_APPROVAL',
+      username: user.username,
+      email: user.email || '',
+    });
   }
   
   const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
@@ -1165,6 +1206,28 @@ app.get('/api/events', authenticateToken, (req, res) => {
     const categoryIds = new Set(events.filter((e) => e.isCategory === true).map((e) => e.id));
     // Keep any parent categories that have at least one VISIBLE child sub-event,
     // even if the category itself was explicitly excluded from courses (child wins).
+    for (const e of events) {
+      if (e.parentId && categoryIds.has(e.parentId) && visibleIds.has(e.id)) {
+        visibleIds.add(e.parentId);
+      }
+    }
+    events = events.filter((e) => visibleIds.has(e.id));
+  } else if (account && account.role === 'faculty') {
+    const allowed = Array.isArray(account.handledCourses) ? account.handledCourses : [];
+    const allowedSet = new Set(allowed);
+    const visibleIds = new Set();
+    for (const e of events) {
+      const courses = Array.isArray(e.courses) ? e.courses : [];
+      const okAll = e.allCourses === true;
+      const okIntersect = coursesIntersect(courses, allowed);
+      const isEmptyAllowed = allowedSet.size === 0;
+      const canSee = !isEmptyAllowed && (okAll || okIntersect);
+      if (canSee) {
+        visibleIds.add(e.id);
+        if (e.isCategory !== true && e.parentId) visibleIds.add(e.parentId);
+      }
+    }
+    const categoryIds = new Set(events.filter((e) => e.isCategory === true).map((e) => e.id));
     for (const e of events) {
       if (e.parentId && categoryIds.has(e.parentId) && visibleIds.has(e.id)) {
         visibleIds.add(e.parentId);
@@ -1247,8 +1310,12 @@ const parseEventRequestPayload = (body, existing = null) => {
   //   below will catch empty-as-an-error and return a 400).
   if (nextAllCourses === true) {
     nextCourses = [...ALL_COURSES];
-  } else if (!Array.isArray(nextCourses) || nextCourses.length === 0) {
-    nextCourses = normalizeCourses(courses);
+  } else {
+    if (!Array.isArray(nextCourses)) nextCourses = [];
+    if (nextCourses.length === 0) {
+      const fallback = normalizeCourses(courses, { allowEmpty: true });
+      if (fallback.length > 0) nextCourses = fallback;
+    }
   }
   return {
     name: cleanName,
@@ -1345,7 +1412,9 @@ app.post('/api/events/:id', authenticateToken, requireAdmin, (req, res) => {
   // override an explicit allCourses=false or courses=[] that we intentionally saved
   // through parseEventRequestPayload above).
   if (events[idx].allCourses !== true && events[idx].allCourses !== false) events[idx].allCourses = true;
-  if (!Array.isArray(events[idx].courses)) events[idx].courses = [...ALL_COURSES];
+  if (!Array.isArray(events[idx].courses)) {
+    events[idx].courses = events[idx].allCourses === false ? [] : [...ALL_COURSES];
+  }
   if (events[idx].isCategory !== true && events[idx].isCategory !== false) events[idx].isCategory = false;
   if (events[idx].parentId !== null && (typeof events[idx].parentId !== 'string' || !events[idx].parentId)) events[idx].parentId = null;
   if (typeof events[idx].location !== 'string') events[idx].location = '';
@@ -1416,6 +1485,8 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
   const event = events.find(e => e.id === eventId);
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
+  eventApplyDefaults(event);
+
   if (event.status && event.status !== 'open') {
     return res.status(400).json({ error: 'Event is closed' });
   }
@@ -1452,6 +1523,14 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
     }
   }
 
+  if (!eventIsVisibleToStudent(event, studentCourse)) {
+    const allowed = Array.isArray(event.courses) ? event.courses.slice().sort().join(', ') : '';
+    const msg = allowed
+      ? `This event is only for ${allowed}. Your course (${studentCourse || 'unassigned'}) cannot scan this QR.`
+      : 'You are not eligible to scan this QR.';
+    return res.status(403).json({ error: msg });
+  }
+
   const facultyUserId = facultyId || (req.user.role === 'faculty' ? req.user.id : null);
   let facultyName = '';
   if (facultyUserId) {
@@ -1459,7 +1538,7 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
     if (f) facultyName = f.fullName || f.username || '';
   }
   if (!facultyUserId || !facultyName) {
-    return res.status(400).json({ error: 'Faculty is required' });
+    return res.status(400).json({ error: 'Professor is required' });
   }
 
   const todayStr = now.toDateString();
@@ -1518,15 +1597,18 @@ app.get('/api/attendance', authenticateToken, (req, res) => {
     return res.json(all.filter(a => a.userId === req.user.id || a.studentId === req.user.username));
   }
   if (req.user.role === 'faculty') {
-    // Faculty sees:
-    // 1) open check-ins handled by this faculty
-    // 2) closed records checked out by this faculty
+    // Professor sees:
+    // 1) open check-ins handled by this professor OR student's course is in handledCourses
+    // 2) closed records checked out by this professor OR student's course is in handledCourses
+    const allowed = Array.isArray(req.user.handledCourses) ? req.user.handledCourses : [];
+    const allowedSet = new Set(allowed);
     return res.json(
       all.filter(a => {
-        if (!a.checkOutAt) {
-          return a.checkedInByFacultyId === req.user.id;
-        }
-        return a.checkedOutByFacultyId === req.user.id;
+        const courseOk = allowedSet.size === 0 ? false : allowedSet.has(String(a.studentCourse || '').trim());
+        const facultyOwnershipOk = !a.checkOutAt
+          ? a.checkedInByFacultyId === req.user.id
+          : a.checkedOutByFacultyId === req.user.id;
+        return courseOk || facultyOwnershipOk;
       }),
     );
   }
@@ -1557,7 +1639,7 @@ setInterval(() => {
         if (Number.isFinite(start) && now - start > ATTENDANCE_TIMEOUT_MIN * 60 * 1000) {
           a.checkOutAt = new Date(start + ATTENDANCE_TIMEOUT_MIN * 60 * 1000).toISOString();
           a.status = 'timeout';
-          // Assign timeout ownership so faculty filtering stays strict and deterministic.
+          // Assign timeout ownership so professor filtering stays strict and deterministic.
           if (!a.checkedOutByFacultyId) {
             a.checkedOutByFacultyId = a.checkedInByFacultyId || '';
             a.checkedOutByFacultyName = a.checkedInByFacultyName || '';
@@ -1601,7 +1683,7 @@ app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-  const { username, password, role, fullName, studentId, course, section } = req.body;
+  const { username, password, role, fullName, studentId, course, section, handledCourses } = req.body;
   const users = loadData(usersFile);
   if (!username || !password || !['student','admin','faculty'].includes(role)) {
     return res.status(400).json({ error: 'Invalid payload' });
@@ -1609,6 +1691,12 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
   if (role === 'student') {
     if (!fullName || !studentId || !course || !section) {
       return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
+    }
+  }
+  if (role === 'faculty') {
+    const normalizedHC = normalizeHandledCourses(handledCourses);
+    if (normalizedHC.length === 0) {
+      return res.status(400).json({ error: 'At least one handled course is required for a Professor account.' });
     }
   }
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
@@ -1629,6 +1717,7 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
     section: section || '',
     isApproved: true,
     isVerified: true,
+    handledCourses: role === 'faculty' ? normalizeHandledCourses(handledCourses) : [],
   };
   users.push(u);
   saveData(usersFile, users);
@@ -1643,6 +1732,8 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
 
   const current = users[idx];
   const next = { ...current };
+  const payload = req.body || {};
+  const explicitlySetHandledCourses = payload != null && 'handledCourses' in payload;
   const {
     id: nextIdRaw,
     username,
@@ -1653,7 +1744,9 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
     course,
     section,
     isApproved,
-  } = req.body || {};
+    isVerified: _isVerified,
+    handledCourses,
+  } = payload;
 
   const nextId = nextIdRaw == null ? current.id : String(nextIdRaw).trim();
   if (isSelfUpdate && nextId !== current.id) {
@@ -1695,9 +1788,14 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
     if (!String(password)) return res.status(400).json({ error: 'Password is required' });
     next.password = await hashPassword(String(password));
   }
+  if (handledCourses != null) {
+    next.handledCourses = normalizeHandledCourses(handledCourses);
+  } else if (!Array.isArray(next.handledCourses)) {
+    next.handledCourses = [];
+  }
   if (isApproved != null) {
     if ((next.role || current.role) !== 'faculty' && Boolean(isApproved) == false) {
-      return res.status(400).json({ error: 'Only faculty can be unapproved' });
+      return res.status(400).json({ error: 'Only professors can be unapproved' });
     }
     next.isApproved = Boolean(isApproved);
     const effRole = (next.role || current.role || '').toLowerCase();
@@ -1710,6 +1808,11 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
     if (effRole === 'faculty' && next.isApproved === false) {
       next.isVerified = false;
     }
+  }
+  // Honor an explicit isVerified flag from the payload (client can set both flags atomically).
+  // If the client set isApproved=true above, this preserves sync unless explicitly overwritten.
+  if (_isVerified != null) {
+    next.isVerified = Boolean(_isVerified);
   }
   if ((next.role || current.role) === 'faculty' && next.isApproved == null) {
     next.isApproved = isFacultyApproved(current);
@@ -1745,6 +1848,22 @@ app.patch('/api/users/:id', authenticateToken, requireAdmin, async (req, res) =>
     if (!next.fullName || !next.studentId || !next.course || !next.section) {
       return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
     }
+  }
+  if (finalRole === 'faculty') {
+    // Only enforce handled-courses non-empty when the caller EXPLICITLY
+    // included "handledCourses" in the request body. This means:
+    //  - POST /api/users (admin creates new professor): always rejected (body has handledCourses),
+    //    and we also guard in the POST route directly above anyway.
+    //  - Edit User Dialog (admin edits courses): rejected correctly, guiding admin to pick courses.
+    //  - Quick "Approve professor" popup (body only has isApproved/isVerified): ALLOWED through,
+    //    even if the legacy record has [] as handledCourses, because ProfessorHomeScreen shows
+    //    the NON-DISMISSABLE first-time setup dialog on first successful login and forces the
+    //    professor to pick courses then before any data is visible.
+    if (explicitlySetHandledCourses && (!Array.isArray(next.handledCourses) || next.handledCourses.length === 0)) {
+      return res.status(400).json({ error: 'At least one handled course is required for a Professor account. Select the course(s) this professor teaches.' });
+    }
+  } else {
+    next.handledCourses = [];
   }
 
   users[idx] = next;
@@ -1848,7 +1967,7 @@ const ensureAllPasswordsHashed = async () => {
       u.isApproved = true;
       changed = true;
     }
-    // Backward-compat: any faculty that is already marked isApproved=true
+    // Backward-compat: any professor that is already marked isApproved=true
     // but isVerified != true must flip isVerified=true. Without this, the user
     // sees "Account pending admin approval" even after admin hit the Approve
     // button, because the isVerified gate runs first on /api/login.
@@ -1856,8 +1975,75 @@ const ensureAllPasswordsHashed = async () => {
       u.isVerified = true;
       changed = true;
     }
+    // Ensure all users have a handledCourses array (professors only use it, others keep [])
+    if (!Array.isArray(u.handledCourses)) {
+      u.handledCourses = [];
+      changed = true;
+    }
+    // FINAL CANONICAL SYNC (bidirectional, catches every legacy flag mismatch):
+    // For professors, isApproved and isVerified MUST always travel together (both true
+    // or both false). This aligns all legacy records where:
+    //  - Old Approve popup only flipped isApproved, left isVerified=false → user stuck pending
+    //  - Manual DB/JSON edits flipped one without the other
+    //  - Old server versions had one-way sync only (isApproved=true → isVerified=true, but NOT the reverse)
+    // After this block runs, both flags are ALWAYS equal for faculty and login success just works.
+    if (u.role === 'faculty') {
+      if (u.isApproved === true && u.isVerified !== true) {
+        u.isVerified = true;
+        changed = true;
+      }
+      if (u.isVerified === true && u.isApproved !== true) {
+        u.isApproved = true;
+        changed = true;
+      }
+      if (u.isApproved === false && u.isVerified !== false) {
+        u.isVerified = false;
+        changed = true;
+      }
+      if (u.isVerified === false && u.isApproved !== false) {
+        u.isApproved = false;
+        changed = true;
+      }
+    }
   }
   if (changed) saveData(usersFile, users);
+};
+
+const ensureEventsSanitized = async () => {
+  const events = loadData(eventsFile);
+  let changed = false;
+  for (const e of events) {
+    const before = JSON.stringify(e);
+    eventApplyDefaults(e);
+    // Additional legacy-data cleanups: clear invalid course entries regardless
+    // of allCourses flag, so course arrays always match canonical ALL_COURSES list.
+    if (Array.isArray(e.courses)) {
+      const cleaned = [];
+      const seen = new Set();
+      for (const raw of e.courses) {
+        const s = String(raw || '').trim();
+        if (!s || !ALL_COURSES_SET.has(s)) continue;
+        if (seen.has(s)) continue;
+        seen.add(s);
+        cleaned.push(s);
+      }
+      // If allCourses=false but every single course ended up selected, keep it as-is
+      // (admin may have explicitly selected all — we can't distinguish from corruption
+      // without an audit trail, and visibility is equivalent anyway).
+      if (e.allCourses === true) {
+        // For allCourses=true, always guarantee the complete canonical list.
+        if (cleaned.length !== ALL_COURSES.length) {
+          e.courses = [...ALL_COURSES];
+        } else {
+          e.courses = cleaned;
+        }
+      } else {
+        e.courses = cleaned;
+      }
+    }
+    if (JSON.stringify(e) !== before) changed = true;
+  }
+  if (changed) saveData(eventsFile, events);
 };
 
 const start = async () => {
@@ -1868,6 +2054,7 @@ const start = async () => {
   }
   await ensureAllPasswordsHashed();
   await ensureDefaultAdmin();
+  await ensureEventsSanitized();
   app.listen(PORT, '0.0.0.0', () => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');

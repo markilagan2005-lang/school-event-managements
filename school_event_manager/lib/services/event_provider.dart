@@ -45,8 +45,9 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token');
+      Event saved;
       if (token == null) {
-        final event = Event(
+        saved = Event(
           id: Uuid.v4(),
           name: name,
           date: date,
@@ -61,9 +62,7 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           allCourses: allCourses,
           courses: courses,
         );
-        await DataService.addEvent(event);
-        await loadEvents();
-        return event;
+        await DataService.addEvent(saved);
       } else {
         final created = await ApiService.addEvent(
           name,
@@ -79,9 +78,21 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           allCourses: allCourses,
           courses: courses,
         );
-        await loadEvents();
-        return created;
+        saved = created.copyWith(allCourses: allCourses, courses: courses);
       }
+      await loadEvents();
+      final current = state.value;
+      if (current != null) {
+        final idx = current.indexWhere((e) => e.id == saved.id);
+        if (idx >= 0) {
+          final patched = List<Event>.from(current);
+          patched[idx] = saved.copyWith(allCourses: allCourses, courses: courses);
+          state = AsyncValue.data(patched);
+        } else {
+          state = AsyncValue.data([saved, ...current]);
+        }
+      }
+      return saved;
     } catch (e) {
       state = AsyncValue.error(e, StackTrace.current);
       return null;
@@ -108,6 +119,7 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token');
+      Event saved;
       if (token == null) {
         final events = await DataService.getEvents();
         final idx = events.indexWhere((e) => e.id == id);
@@ -129,8 +141,10 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           courses: courses,
         );
         await DataService.updateEvent(next);
-        await loadEvents();
-        return next;
+        saved = next.copyWith(
+          allCourses: allCourses ?? next.allCourses,
+          courses: courses ?? next.courses,
+        );
       } else {
         final updated = await ApiService.updateEvent(
           id,
@@ -148,9 +162,25 @@ class EventNotifier extends StateNotifier<AsyncValue<List<Event>>> {
           allCourses: allCourses,
           courses: courses,
         );
-        await loadEvents();
-        return updated;
+        saved = updated.copyWith(
+          allCourses: allCourses ?? updated.allCourses,
+          courses: courses ?? updated.courses,
+        );
       }
+      await loadEvents();
+      final loaded = state.value;
+      if (loaded != null) {
+        final idx = loaded.indexWhere((e) => e.id == saved.id);
+        if (idx >= 0) {
+          final patched = List<Event>.from(loaded);
+          patched[idx] = saved.copyWith(
+            allCourses: allCourses ?? saved.allCourses,
+            courses: courses ?? saved.courses,
+          );
+          state = AsyncValue.data(patched);
+        }
+      }
+      return saved;
     } catch (e) {
       state = AsyncValue.error(e, StackTrace.current);
       return null;

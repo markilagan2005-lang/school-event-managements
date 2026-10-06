@@ -1,20 +1,10 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/event.dart';
-import '../models/attendee.dart';
 import '../models/attendance.dart';
 import 'api_client.dart';
 
 class ApiService {
-  static DateTime _toLocal(DateTime dt) => dt.isUtc ? dt.toLocal() : dt;
-
-  static DateTime? _parseDateTime(dynamic raw) {
-    if (raw == null) return null;
-    final parsed = DateTime.tryParse(raw.toString());
-    if (parsed == null) return null;
-    return _toLocal(parsed);
-  }
-
   static String _toServerIso(DateTime dt) => dt.toUtc().toIso8601String();
 
   static Future<ApiClient> _client() async {
@@ -40,6 +30,7 @@ class ApiService {
     String? email,
     String? registrationOtp,
     String? registrationOtpRef,
+    List<String>? handledCourses,
   }) async {
     final c = await _client();
     final res = await c.postJson('/register', {
@@ -55,6 +46,7 @@ class ApiService {
         'registrationOtp': registrationOtp.trim(),
       if (registrationOtpRef != null && registrationOtpRef.trim().isNotEmpty)
         'registrationOtpRef': registrationOtpRef.trim(),
+      if (handledCourses != null && role == 'faculty') 'handledCourses': List<String>.from(handledCourses),
     });
     final prefs = await SharedPreferences.getInstance();
     final token = res['token']?.toString();
@@ -153,25 +145,11 @@ class ApiService {
     final token = prefs.getString('auth_token');
     final list = await c.getJsonList('/events', token: token);
     return list.map((e) {
-      final attendees = (e['attendees'] as List<dynamic>? ?? [])
-          .map((a) => Attendee.fromJson(a as Map<String, dynamic>))
-          .toList();
-      return Event(
-        id: e['id'] ?? '',
-        name: e['name'] ?? '',
-        date: _parseDateTime(e['date']) ?? DateTime.now(),
-        status: e['status'] ?? 'open',
-        startAt: _parseDateTime(e['startAt']),
-        endAt: _parseDateTime(e['endAt']),
-        description: e['description']?.toString() ?? '',
-        posterImageUrl: e['posterImageUrl']?.toString() ?? '',
-        location: e['location']?.toString() ?? '',
-        isCategory: e['isCategory'] == true,
-        parentId: (e['parentId']?.toString().isNotEmpty == true) ? e['parentId'].toString() : null,
-        allCourses: e['allCourses'] == true || e['allCourses'] == null,
-        courses: (e['courses'] as List<dynamic>? ?? []).whereType<String>().toList(),
-        attendees: attendees,
-      );
+      if (e is Map<String, dynamic>) {
+        return Event.fromJson(e);
+      }
+      final map = Map<String, dynamic>.from(e as Map);
+      return Event.fromJson(map);
     }).toList();
   }
 
@@ -343,6 +321,7 @@ class ApiService {
     String? studentId,
     String? course,
     String? section,
+    List<String>? handledCourses,
   }) async {
     final c = await _client();
     final prefs = await SharedPreferences.getInstance();
@@ -357,6 +336,7 @@ class ApiService {
         if (studentId != null) 'studentId': studentId,
         if (course != null) 'course': course,
         if (section != null) 'section': section,
+        if (handledCourses != null) 'handledCourses': handledCourses,
       },
       token: token,
     );
@@ -376,10 +356,12 @@ class ApiService {
     String? password,
     String? role,
     bool? isApproved,
+    bool? isVerified,
     String? fullName,
     String? studentId,
     String? course,
     String? section,
+    List<String>? handledCourses,
   }) async {
     final c = await _client();
     final prefs = await SharedPreferences.getInstance();
@@ -392,10 +374,12 @@ class ApiService {
         if (password != null) 'password': password,
         if (role != null) 'role': role,
         if (isApproved != null) 'isApproved': isApproved,
+        if (isVerified != null) 'isVerified': isVerified,
         if (fullName != null) 'fullName': fullName,
         if (studentId != null) 'studentId': studentId,
         if (course != null) 'course': course,
         if (section != null) 'section': section,
+        if (handledCourses != null) 'handledCourses': handledCourses,
       },
       token: token,
     );

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../models/attendance.dart';
+import '../models/event.dart';
 import '../utils/uuid.dart';
 import 'data_service.dart';
 import '../config.dart';
@@ -46,6 +47,38 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
     }
   }
 
+  Future<Event?> _lookupEvent(String eventId, {required bool online}) async {
+    try {
+      if (online) {
+        final events = await ApiService.getEvents();
+        final found = events.where((e) => e.id == eventId).cast<Event?>().firstWhere((e) => e != null, orElse: () => null);
+        return found;
+      }
+      final offline = await DataService.getEvents();
+      final found = offline.where((e) => e.id == eventId).cast<Event?>().firstWhere((e) => e != null, orElse: () => null);
+      return found;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _courseEligibilityError(Event event, String studentCourse) {
+    final sc = studentCourse.trim();
+    if (event.allCourses) return null;
+    final allowed = event.courses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
+    if (allowed.isEmpty) {
+      return 'This event has no courses assigned. Ask an admin to configure it.';
+    }
+    if (sc.isEmpty) {
+      return 'Your account has no course assigned. Ask an admin to set your course before scanning.';
+    }
+    if (!allowed.contains(sc)) {
+      final sorted = allowed.toList()..sort();
+      return 'This event is only for ${sorted.join(', ')}. Your course ($sc) cannot scan this QR.';
+    }
+    return null;
+  }
+
   Future<String> markAttendance(
     String eventId,
     String eventName,
@@ -53,13 +86,23 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
     String studentName,
     String userId, {
     String? facultyId,
+    required String studentCourse,
   }) async {
     state = const AsyncValue.loading();
     try {
       final now = DateTime.now();
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token');
-      if (token != null) {
+      final online = token != null;
+      final event = await _lookupEvent(eventId, online: online);
+      if (event != null) {
+        final err = _courseEligibilityError(event, studentCourse);
+        if (err != null) {
+          state = AsyncValue.error(Exception(err), StackTrace.current);
+          return err;
+        }
+      }
+      if (online) {
         final rec = await ApiService.markAttendance(eventId, facultyId: facultyId);
         await loadAttendance();
         final checkIn = rec.checkInAt ?? rec.timestamp;

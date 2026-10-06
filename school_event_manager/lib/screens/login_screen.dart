@@ -291,6 +291,83 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       AuthActionResult result = await doLogin();
                                       if (!ctx.mounted) return;
                                       if (result.succeeded) return;
+                                      if (result.isPendingAdminApproval) {
+                                        final ok = await showDialog<bool>(
+                                          context: ctx,
+                                          barrierDismissible: false,
+                                          builder: (context) => AlertDialog(
+                                            icon: const Icon(Icons.verified_user_outlined, size: 40),
+                                            title: const Text('Professor Account Pending Approval'),
+                                            content: SingleChildScrollView(
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    result.errorMessage ??
+                                                        'Your professor account is still pending approval by an administrator. You will be able to sign in once the admin approves your registration.',
+                                                  ),
+                                                  const SizedBox(height: 10),
+                                                  if ((result.username ?? '').isNotEmpty)
+                                                    Text.rich(
+                                                      TextSpan(
+                                                        children: [
+                                                          const TextSpan(
+                                                            text: 'Username: ',
+                                                            style: TextStyle(fontWeight: FontWeight.bold),
+                                                          ),
+                                                          TextSpan(text: result.username),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  if ((result.email ?? '').isNotEmpty)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 4),
+                                                      child: Text.rich(
+                                                        TextSpan(
+                                                          children: [
+                                                            const TextSpan(
+                                                              text: 'Email: ',
+                                                              style: TextStyle(fontWeight: FontWeight.bold),
+                                                            ),
+                                                            TextSpan(text: result.email),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  const SizedBox(height: 8),
+                                                  const Text(
+                                                    'Tip: Contact your school administrator or department head to speed up approval.',
+                                                    style: TextStyle(color: Colors.black54, fontSize: 12),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            actions: [
+                                              FilledButton.icon(
+                                                onPressed: () => Navigator.pop(context, true),
+                                                icon: const Icon(Icons.refresh),
+                                                label: const Text('Try again'),
+                                              ),
+                                              OutlinedButton(
+                                                onPressed: () => Navigator.pop(context, false),
+                                                child: const Text('Back to login'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                        if (!ctx.mounted) return;
+                                        if (ok == true) {
+                                          final retry = await doLogin();
+                                          if (!ctx.mounted) return;
+                                          if (retry.succeeded) return;
+                                          final msg = retry.isPendingAdminApproval
+                                              ? 'Still pending. Please wait for your administrator to approve your account, then tap Try again.'
+                                              : (retry.errorMessage ?? 'Login failed');
+                                          messenger.showSnackBar(SnackBar(content: Text(msg)));
+                                        }
+                                        return;
+                                      }
                                       if (result.isEmailVerificationRequired) {
                                         final closed = await _showOtpDialog(
                                           ctx,
@@ -344,6 +421,83 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                         AuthActionResult result = await doLogin();
                                         if (!ctx.mounted) return;
                                         if (result.succeeded) return;
+                                        if (result.isPendingAdminApproval) {
+                                          final ok = await showDialog<bool>(
+                                            context: ctx,
+                                            barrierDismissible: false,
+                                            builder: (context) => AlertDialog(
+                                              icon: const Icon(Icons.verified_user_outlined, size: 40),
+                                              title: const Text('Professor Account Pending Approval'),
+                                              content: SingleChildScrollView(
+                                                child: Column(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      result.errorMessage ??
+                                                          'Your professor account is still pending approval by an administrator. You will be able to sign in once the admin approves your registration.',
+                                                    ),
+                                                    const SizedBox(height: 10),
+                                                    if ((result.username ?? '').isNotEmpty)
+                                                      Text.rich(
+                                                        TextSpan(
+                                                          children: [
+                                                            const TextSpan(
+                                                              text: 'Username: ',
+                                                              style: TextStyle(fontWeight: FontWeight.bold),
+                                                            ),
+                                                            TextSpan(text: result.username),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    if ((result.email ?? '').isNotEmpty)
+                                                      Padding(
+                                                        padding: const EdgeInsets.only(top: 4),
+                                                        child: Text.rich(
+                                                          TextSpan(
+                                                            children: [
+                                                              const TextSpan(
+                                                                text: 'Email: ',
+                                                                style: TextStyle(fontWeight: FontWeight.bold),
+                                                              ),
+                                                              TextSpan(text: result.email),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    const SizedBox(height: 8),
+                                                    const Text(
+                                                      'Tip: Contact your school administrator or department head to speed up approval.',
+                                                      style: TextStyle(color: Colors.black54, fontSize: 12),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              actions: [
+                                                FilledButton.icon(
+                                                  onPressed: () => Navigator.pop(context, true),
+                                                  icon: const Icon(Icons.refresh),
+                                                  label: const Text('Try again'),
+                                                ),
+                                                OutlinedButton(
+                                                  onPressed: () => Navigator.pop(context, false),
+                                                  child: const Text('Back to login'),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                          if (!ctx.mounted) return;
+                                          if (ok == true) {
+                                            final retry = await doLogin();
+                                            if (!ctx.mounted) return;
+                                            if (retry.succeeded) return;
+                                            final msg = retry.isPendingAdminApproval
+                                                ? 'Still pending. Please wait for your administrator to approve your account, then tap Try again.'
+                                                : (retry.errorMessage ?? 'Login failed');
+                                            messenger.showSnackBar(SnackBar(content: Text(msg)));
+                                          }
+                                          return;
+                                        }
                                         if (result.isEmailVerificationRequired) {
                                           final closed = await _showOtpDialog(
                                             ctx,
@@ -445,6 +599,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     String? selectedCourse;
     int? selectedYear;
     String? selectedSection;
+    final Set<String> selectedHandledCourseCodes = {};
+    const List<MapEntry<String, String>> handledCourseOptions = [
+      MapEntry('BSC', 'Bachelor of Science in Criminology'),
+      MapEntry('BSIS', 'Bachelor of Science in Information System'),
+      MapEntry('BSP', 'Bachelor of Science in Psychology'),
+      MapEntry('BSAIS', 'Bachelor of Science in Accounting Information System'),
+      MapEntry('BSED', 'Bachelor of Secondary Education'),
+      MapEntry('BSA', 'Bachelor of Science in Accountancy'),
+    ];
     // ---- Pre-registration OTP state (Student only) ----
     int studentStage = 1; // 1 = send-otp screen; 2 = otp + details screen
     bool sendingOtp = false;
@@ -664,7 +827,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           decoration: const InputDecoration(labelText: 'Role'),
                           items: const [
                             DropdownMenuItem(value: 'student', child: Text('Student')),
-                            DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
+                            DropdownMenuItem(value: 'faculty', child: Text('Professor')),
                           ],
                           onChanged: (value) {
                             if (value == null) return;
@@ -674,6 +837,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               selectedYear = null;
                               selectedSection = null;
                               submitBannerError = null;
+                              if (role != 'faculty') {
+                                selectedHandledCourseCodes.clear();
+                              }
                               if (role == 'student') {
                                 studentStage = 1;
                                 pendingOtpRef = null;
@@ -936,7 +1102,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             const SizedBox(height: 8),
                           ],
                         ] else ...[
-                          // -------------- FACULTY flow (unchanged) --------------
+                          // -------------- FACULTY / PROFESSOR flow --------------
                           TextField(
                             controller: usernameController,
                             decoration: const InputDecoration(labelText: 'Username'),
@@ -944,6 +1110,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           const SizedBox(height: 10),
                           TextField(
                             controller: passwordController,
+                            key: passwordFieldKey,
                             obscureText: obscureRegisterPassword,
                             decoration: InputDecoration(
                               labelText: 'Password',
@@ -962,6 +1129,85 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             controller: fullNameController,
                             decoration: const InputDecoration(labelText: 'Full name'),
                           ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Courses you handle (select at least one):',
+                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(12),
+                              color: Theme.of(context).colorScheme.surface,
+                            ),
+                            child: Column(
+                              children: [
+                                for (final opt in handledCourseOptions)
+                                  CheckboxListTile.adaptive(
+                                    value: selectedHandledCourseCodes.contains(opt.key),
+                                    title: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary
+                                                .withValues(alpha: 0.10),
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                                  .withValues(alpha: 0.30),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            opt.key,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 12,
+                                              letterSpacing: 0.4,
+                                              color: Theme.of(context).colorScheme.primary,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            opt.value,
+                                            style: const TextStyle(fontSize: 14),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    controlAffinity: ListTileControlAffinity.leading,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 2),
+                                    dense: true,
+                                    onChanged: (v) {
+                                      setStateDialog(() {
+                                        if (v == true) {
+                                          selectedHandledCourseCodes.add(opt.key);
+                                        } else {
+                                          selectedHandledCourseCodes.remove(opt.key);
+                                        }
+                                      });
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
+                          if (selectedHandledCourseCodes.isEmpty && submitBannerError != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(
+                                '⚠ Pick the course(s) you teach.',
+                                style: TextStyle(color: Colors.red.shade800, fontSize: 12),
+                              ),
+                            ),
                         ],
                       ],
                     ),
@@ -1062,6 +1308,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             return;
                           }
                         }
+                        if (role == 'faculty') {
+                          if (fullName.isEmpty) {
+                            setStateDialog(() {
+                              submitBannerError = 'Enter your full name.';
+                            });
+                            return;
+                          }
+                          if (selectedHandledCourseCodes.isEmpty) {
+                            setStateDialog(() {
+                              submitBannerError =
+                                  'Pick at least one course you handle (tap the checkboxes above).';
+                            });
+                            return;
+                          }
+                        }
                         if (!_isStrongPassword(password)) {
                           setStateDialog(() {
                             submitBannerError =
@@ -1082,6 +1343,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           email: role == 'student' ? email : null,
                           registrationOtp: role == 'student' ? otp : null,
                           registrationOtpRef: role == 'student' ? otpRef : null,
+                          handledCourses:
+                              role == 'faculty' ? selectedHandledCourseCodes.toList() : null,
                         );
                         if (!ctx.mounted) return;
                         final err = result.errorMessage;

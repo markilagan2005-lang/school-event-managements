@@ -43,6 +43,8 @@ class AuthActionResult {
 
   bool get isEmailVerificationRequired =>
       messageCode == 'EMAIL_VERIFICATION_REQUIRED';
+
+  bool get isPendingAdminApproval => messageCode == 'PENDING_ADMIN_APPROVAL';
 }
 
 final authProvider = StateNotifierProvider<AuthNotifier, AsyncValue<User?> >((ref) => AuthNotifier());
@@ -125,6 +127,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
     String? email,
     String? registrationOtp,
     String? registrationOtpRef,
+    List<String>? handledCourses,
   }) async {
     if (username.trim().isEmpty || password.isEmpty) {
       state = const AsyncValue.data(null);
@@ -146,6 +149,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<User?>> {
         email: email,
         registrationOtp: registrationOtp,
         registrationOtpRef: registrationOtpRef,
+        handledCourses: handledCourses,
       );
       final messageCode = meta?['messageCode']?.toString();
       final mEmail = meta?['email']?.toString();
