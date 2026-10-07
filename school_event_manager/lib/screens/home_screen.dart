@@ -27,6 +27,12 @@ final currentUserProvider = FutureProvider<User?>((ref) async {
   return null;
 });
 
+String shortCourseName(String course) {
+  final c = course.trim();
+  if (c.isEmpty) return course;
+  return kCourseShort[c] ?? c;
+}
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -1818,7 +1824,9 @@ class _AdminReportsTabState extends ConsumerState<AdminReportsTab> {
                 ...sorted.map((r) {
                   final checkIn = r.checkInAt ?? r.timestamp;
                   final checkOut = r.checkOutAt;
-                  final course = r.studentCourse.trim().isEmpty ? 'N/A' : r.studentCourse.trim();
+                  final course = r.studentCourse.trim().isEmpty
+                      ? 'N/A'
+                      : shortCourseName(r.studentCourse.trim());
                   final section = r.studentSection.trim().isEmpty ? 'N/A' : r.studentSection.trim();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -2349,7 +2357,53 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                           prefixIcon: Icon(Icons.school),
                         ),
                         hint: const Text('Select course'),
-                        items: kCoursesList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                        selectedItemBuilder: (context) => kCoursesList.map((c) {
+                          final short = shortCourseName(c);
+                          return Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              short,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                        items: kCoursesList.map((c) {
+                          final short = shortCourseName(c);
+                          return DropdownMenuItem(
+                            value: c,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    short,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.2,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    c,
+                                    style: TextStyle(
+                                      color: Colors.black.withValues(alpha: 0.55),
+                                      fontSize: 12,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
                         onChanged: (v) => setStateDialog(() {
                           selectedCourse = v;
                           selectedSection = null;
@@ -4379,10 +4433,65 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
                         child: DropdownButtonFormField<String>(
                           key: ValueKey(effectiveFilter),
                           initialValue: effectiveFilter,
+                          isExpanded: true,
                           decoration: const InputDecoration(labelText: 'Course'),
+                          selectedItemBuilder: (context) {
+                            return [
+                              'All',
+                              ...courses,
+                            ].map((c) {
+                              final display = c == 'All' ? 'All' : shortCourseName(c);
+                              return Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  display,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context).colorScheme.onSurface,
+                                  ),
+                                ),
+                              );
+                            }).toList();
+                          },
                           items: [
-                            const DropdownMenuItem(value: 'All', child: Text('All')),
-                            ...courses.map((c) => DropdownMenuItem(value: c, child: Text(c))),
+                            const DropdownMenuItem(
+                              value: 'All',
+                              child: Text('All Courses'),
+                            ),
+                            ...courses.map((c) {
+                              final short = shortCourseName(c);
+                              return DropdownMenuItem(
+                                value: c,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        short,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.2,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        c,
+                                        style: TextStyle(
+                                          color: Colors.black.withValues(alpha: 0.55),
+                                          fontSize: 12,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
                           ],
                           onChanged: (v) {
                             if (v == null) return;
@@ -4411,7 +4520,7 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Text(
-                      'No attendance yet for ${courses.join(', ')}.',
+                      'No attendance yet for ${courses.map(shortCourseName).join(', ')}.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54),
                     ),
                   ),
@@ -4422,9 +4531,10 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
                   final expectedOut = checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
                   final out = r.checkOutAt ?? expectedOut;
                   final isOut = r.checkOutAt != null;
-                  final courseLine = r.studentCourse.isEmpty && r.studentSection.isEmpty
+                  final shortCourse = r.studentCourse.isEmpty ? '' : shortCourseName(r.studentCourse);
+                  final courseLine = shortCourse.isEmpty && r.studentSection.isEmpty
                       ? ''
-                      : '\n${r.studentCourse}${r.studentSection.isEmpty ? '' : ' • ${r.studentSection}'}';
+                      : '\n$shortCourse${r.studentSection.isEmpty ? '' : ' • ${r.studentSection}'}';
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Card(
