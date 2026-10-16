@@ -35,6 +35,54 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
+  static String _clockLabel(DateTime dt) {
+    final local = dt.toLocal();
+    final hour24 = local.hour;
+    final hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final meridiem = hour24 >= 12 ? 'PM' : 'AM';
+    return '$hour12:$minute $meridiem';
+  }
+
+  AttendanceRecord? _findOpenRecord(
+    Iterable<AttendanceRecord> records,
+    String eventId,
+    String studentId,
+    DateTime now,
+  ) {
+    for (final r in records) {
+      if (r.eventId != eventId || r.studentId != studentId) continue;
+      if (r.checkOutAt != null) continue;
+      final checkIn = r.checkInAt ?? r.timestamp;
+      if (_sameDay(checkIn, now)) return r;
+    }
+    return null;
+  }
+
+  // Mirrors the server-side scheduling rules: time in only from the scheduled
+  // start, time out only from the scheduled end.
+  String? _timingError(Event? event, {required bool isCheckOut, required DateTime now}) {
+    if (event == null) return null;
+    if (isCheckOut) {
+      final end = event.endAt;
+      if (end != null && now.isBefore(end)) {
+        return 'You can only time out at ${_clockLabel(end)} or later.';
+      }
+      return null;
+    }
+    final start = event.startAt;
+    if (start != null && now.isBefore(start)) {
+      return 'You can only time in at ${_clockLabel(start)} or later.';
+    }
+    return null;
+  }
+
+  bool _isLateCheckIn(Event? event, DateTime now) {
+    final start = event?.startAt;
+    if (start == null) return false;
+    return now.isAfter(start.add(const Duration(minutes: 15)));
+  }
+
   Future<void> loadAttendance() async {
     state = const AsyncValue.loading();
     try {
@@ -102,14 +150,27 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
           return err;
         }
       }
+
+      // An open same-day record means this scan is a time-out, otherwise a time-in.
+      final cached = state.value ?? const <AttendanceRecord>[];
+      final open = _findOpenRecord(cached, eventId, studentId, now);
+      final timingErr = _timingError(event, isCheckOut: open != null, now: now);
+      if (timingErr != null) {
+        state = AsyncValue.data(cached);
+        return timingErr;
+      }
+
       if (online) {
         final rec = await ApiService.markAttendance(eventId, facultyId: facultyId);
         await loadAttendance();
         final checkIn = rec.checkInAt ?? rec.timestamp;
-        if (rec.status == 'in') {
-          final expectedOut = checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
+        if (rec.checkOutAt == null) {
+          final expectedOut = rec.expectedOutAt ??
+              event?.endAt ??
+              checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
           final teacher = rec.checkedInByFacultyName.isEmpty ? '' : ' • ${rec.checkedInByFacultyName}';
-          return 'Checked in$teacher. Expected out: ${expectedOut.toLocal()}';
+          final late = rec.isLate ? ' • LATE' : '';
+          return 'Checked in$late$teacher. Expected out: ${expectedOut.toLocal()}';
         }
         final out = rec.checkOutAt ?? now;
         final teacher = rec.checkedOutByFacultyName.isEmpty ? '' : ' • ${rec.checkedOutByFacultyName}';
@@ -117,12 +178,9 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
       }
 
       final existing = await DataService.getAttendance();
-      final open = existing.where((r) {
-        if (r.eventId != eventId || r.studentId != studentId) return false;
-        if (r.checkOutAt != null) return false;
-        final checkIn = r.checkInAt ?? r.timestamp;
-        return _sameDay(checkIn, now);
-      }).cast<AttendanceRecord?>().firstWhere((r) => r != null, orElse: () => null);
+      final offlineOpen = _findOpenRecord(existing, eventId, studentId, now);
+      final isCheckOut = offlineOpen != null;
+      final late = !isCheckOut && _isLateCheckIn(event, now);
 
       final record = AttendanceRecord(
         id: Uuid.v4(),
@@ -130,7 +188,10 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
         eventName: eventName,
         studentId: studentId,
         studentName: studentName,
-        status: open == null ? 'in' : 'out',
+        studentCourse: studentCourse,
+        status: isCheckOut ? 'out' : 'in',
+        isLate: late,
+        expectedOutAt: isCheckOut ? null : event?.endAt,
         timestamp: now,
         checkInAt: now,
         checkOutAt: null,
@@ -138,9 +199,11 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
       );
       await DataService.addAttendance(record);
       await loadAttendance();
-      if (open == null) {
-        final expectedOut = now.add(const Duration(minutes: attendanceTimeoutMinutes));
-        return 'Checked in. Expected out: ${expectedOut.toLocal()}';
+      if (!isCheckOut) {
+        final expectedOut = event?.endAt ??
+            now.add(const Duration(minutes: attendanceTimeoutMinutes));
+        final lateSuffix = late ? ' • LATE' : '';
+        return 'Checked in$lateSuffix. Expected out: ${expectedOut.toLocal()}';
       }
       return 'Checked out: ${now.toLocal()}';
     } catch (e) {

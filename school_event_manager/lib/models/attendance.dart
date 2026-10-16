@@ -7,8 +7,10 @@ class AttendanceRecord {
   final String studentCourse;
   final String studentSection;
   final String status;
+  final bool isLate;
   final DateTime? checkInAt;
   final DateTime? checkOutAt;
+  final DateTime? expectedOutAt;
   final DateTime timestamp;
   final String userId;
   final String checkedInByFacultyId;
@@ -25,8 +27,10 @@ class AttendanceRecord {
     this.studentCourse = '',
     this.studentSection = '',
     this.status = 'present',
+    this.isLate = false,
     this.checkInAt,
     this.checkOutAt,
+    this.expectedOutAt,
     required this.timestamp,
     required this.userId,
     this.checkedInByFacultyId = '',
@@ -44,9 +48,11 @@ class AttendanceRecord {
         'studentCourse': studentCourse,
         'studentSection': studentSection,
         'status': status,
+        'isLate': isLate,
         'timestamp': timestamp.toIso8601String(),
         'checkInAt': checkInAt?.toIso8601String(),
         'checkOutAt': checkOutAt?.toIso8601String(),
+        'expectedOutAt': expectedOutAt?.toIso8601String(),
         'userId': userId,
         'checkedInByFacultyId': checkedInByFacultyId,
         'checkedInByFacultyName': checkedInByFacultyName,
@@ -72,9 +78,11 @@ class AttendanceRecord {
         studentCourse: json['studentCourse'] ?? '',
         studentSection: json['studentSection'] ?? '',
         status: json['status'] ?? 'present',
+        isLate: json['isLate'] == true || (json['status'] ?? '') == 'late',
         timestamp: _parseDate(json['timestamp'] ?? json['checkInAt']) ?? DateTime.now(),
         checkInAt: _parseDate(json['checkInAt'] ?? json['timestamp']),
         checkOutAt: _parseDate(json['checkOutAt']),
+        expectedOutAt: _parseDate(json['expectedOutAt']),
         userId: json['userId'] ?? '',
         checkedInByFacultyId: json['checkedInByFacultyId'] ?? '',
         checkedInByFacultyName: json['checkedInByFacultyName'] ?? '',

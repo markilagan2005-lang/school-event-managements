@@ -1508,18 +1508,6 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
     return res.status(400).json({ error: 'Event is closed' });
   }
   const now = new Date();
-  if (event.startAt) {
-    const startMs = Date.parse(event.startAt);
-    if (Number.isFinite(startMs) && now.getTime() < startMs) {
-      return res.status(400).json({ error: 'Event not open yet' });
-    }
-  }
-  if (event.endAt) {
-    const endMs = Date.parse(event.endAt);
-    if (Number.isFinite(endMs) && now.getTime() > endMs) {
-      return res.status(400).json({ error: 'Event is closed' });
-    }
-  }
 
   const users = loadData(usersFile);
   const account = users.find(u => u.id === req.user.id) || {};
@@ -1562,6 +1550,19 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
   const openIdx = attendance.findIndex(a => a.eventId === eventId && a.studentId === studentId &&
     (!a.checkOutAt) && new Date(a.checkInAt || a.timestamp).toDateString() === todayStr);
   if (openIdx !== -1) {
+    // Time out / check out: only allowed once the event's scheduled end time is reached.
+    if (event.endAt) {
+      const endMs = Date.parse(event.endAt);
+      if (Number.isFinite(endMs) && now.getTime() < endMs) {
+        const endDate = new Date(endMs);
+        let endHour = endDate.getHours();
+        const endMin = String(endDate.getMinutes()).padStart(2, '0');
+        const endMeridiem = endHour >= 12 ? 'PM' : 'AM';
+        endHour = endHour % 12;
+        if (endHour === 0) endHour = 12;
+        return res.status(400).json({ error: `You can only time out at ${endHour}:${endMin} ${endMeridiem} or later.` });
+      }
+    }
     const open = attendance[openIdx];
     open.checkOutAt = now.toISOString();
     open.status = 'out';
@@ -1570,6 +1571,14 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
     saveData(attendanceFile, attendance);
     return res.json(open);
   }
+
+  // Time in / check in: only allowed from the event's scheduled start time.
+  const startMs = event.startAt ? Date.parse(event.startAt) : NaN;
+  if (Number.isFinite(startMs) && now.getTime() < startMs) {
+    return res.status(400).json({ error: 'Event not open yet' });
+  }
+  const graceMs = 15 * 60 * 1000;
+  const isLate = Number.isFinite(startMs) && now.getTime() > startMs + graceMs;
 
   const rec = {
     id: uuidv4(),
@@ -1580,6 +1589,8 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
     studentCourse,
     studentSection,
     status: 'in',
+    isLate,
+    expectedOutAt: event.endAt || null,
     timestamp: now.toISOString(),
     checkInAt: now.toISOString(),
     checkOutAt: null,
@@ -1648,13 +1659,22 @@ app.delete('/api/attendance/me', authenticateToken, (req, res) => {
 setInterval(() => {
   try {
     const attendance = loadData(attendanceFile);
+    const events = loadData(eventsFile);
+    const eventById = new Map(events.map(e => [e.id, e]));
     const now = Date.now();
     let changed = false;
     for (const a of attendance) {
       if (!a.checkOutAt && a.checkInAt) {
         const start = Date.parse(a.checkInAt);
-        if (Number.isFinite(start) && now - start > ATTENDANCE_TIMEOUT_MIN * 60 * 1000) {
-          a.checkOutAt = new Date(start + ATTENDANCE_TIMEOUT_MIN * 60 * 1000).toISOString();
+        if (!Number.isFinite(start)) continue;
+        const event = eventById.get(a.eventId);
+        const endMs = event && event.endAt ? Date.parse(event.endAt) : NaN;
+        // Prefer the event's scheduled end time; fall back to the legacy fixed timeout.
+        const closeAt = Number.isFinite(endMs)
+          ? endMs
+          : start + ATTENDANCE_TIMEOUT_MIN * 60 * 1000;
+        if (now >= closeAt) {
+          a.checkOutAt = new Date(closeAt).toISOString();
           a.status = 'timeout';
           // Assign timeout ownership so professor filtering stays strict and deterministic.
           if (!a.checkedOutByFacultyId) {

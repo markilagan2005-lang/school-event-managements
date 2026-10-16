@@ -1622,7 +1622,7 @@ class AdminAttendanceTab extends ConsumerWidget {
             itemBuilder: (context, index) {
               final r = sorted[index];
               final checkIn = r.checkInAt ?? r.timestamp;
-              final expectedOut = checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
+              final expectedOut = r.expectedOutAt ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
               final out = r.checkOutAt ?? expectedOut;
               final isOut = r.checkOutAt != null;
               return Card(
@@ -1646,7 +1646,7 @@ class AdminAttendanceTab extends ConsumerWidget {
                       '${r.studentName} (${r.studentId})\nIn: ${checkIn.toLocal()} • Out: ${out.toLocal()}',
                       style: const TextStyle(color: Colors.black54),
                     ),
-                    trailing: _StatusChip(isOut: isOut),
+                    trailing: _StatusChip(isOut: isOut, isLate: r.isLate),
                   ),
                 ),
               );
@@ -1849,7 +1849,7 @@ class _AdminReportsTabState extends ConsumerState<AdminReportsTab> {
                           subtitle: Text(
                             'Course: $course • Section: $section\n'
                             'In: ${checkIn.toLocal()}\n'
-                            'Out: ${(checkOut ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes))).toLocal()}',
+                            'Out: ${(checkOut ?? r.expectedOutAt ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes))).toLocal()}',
                             style: const TextStyle(color: Colors.black54),
                           ),
                           trailing: IconButton(
@@ -3277,7 +3277,7 @@ class StudentAttendanceTab extends ConsumerWidget {
                   itemBuilder: (context, index) {
                     final r = mine[index];
                     final checkIn = r.checkInAt ?? r.timestamp;
-                    final expectedOut = checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
+                    final expectedOut = r.expectedOutAt ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
                     final out = r.checkOutAt ?? expectedOut;
                     final isOut = r.checkOutAt != null;
                     return Card(
@@ -3301,7 +3301,7 @@ class StudentAttendanceTab extends ConsumerWidget {
                             'In: ${checkIn.toLocal()}\nOut: ${out.toLocal()}',
                             style: const TextStyle(color: Colors.black54),
                           ),
-                          trailing: _StatusChip(isOut: isOut),
+                          trailing: _StatusChip(isOut: isOut, isLate: r.isLate),
                         ),
                       ),
                     );
@@ -4534,7 +4534,7 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
               else
                 ...sorted.map((r) {
                   final checkIn = r.checkInAt ?? r.timestamp;
-                  final expectedOut = checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
+                  final expectedOut = r.expectedOutAt ?? checkIn.add(const Duration(minutes: attendanceTimeoutMinutes));
                   final out = r.checkOutAt ?? expectedOut;
                   final isOut = r.checkOutAt != null;
                   final shortCourse = r.studentCourse.isEmpty ? '' : shortCourseName(r.studentCourse);
@@ -4564,7 +4564,7 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
                             '${r.studentName} (${r.studentId})$courseLine\nIn: ${checkIn.toLocal()} • Out: ${out.toLocal()}',
                             style: const TextStyle(color: Colors.black54),
                           ),
-                          trailing: _StatusChip(isOut: isOut),
+                          trailing: _StatusChip(isOut: isOut, isLate: r.isLate),
                         ),
                       ),
                     ),
@@ -4579,15 +4579,20 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.isOut});
+  const _StatusChip({required this.isOut, this.isLate = false});
 
   final bool isOut;
+  final bool isLate;
 
   @override
   Widget build(BuildContext context) {
-    final bg = isOut ? const Color(0xFFE6F7EE) : const Color(0xFFE8F0FF);
-    final fg = isOut ? const Color(0xFF0F7A3A) : const Color(0xFF1E4DB7);
-    final text = isOut ? 'OUT' : 'IN';
+    final bg = isLate
+        ? const Color(0xFFFDECEC)
+        : (isOut ? const Color(0xFFE6F7EE) : const Color(0xFFE8F0FF));
+    final fg = isLate
+        ? const Color(0xFFB3261E)
+        : (isOut ? const Color(0xFF0F7A3A) : const Color(0xFF1E4DB7));
+    final text = isLate ? 'LATE' : (isOut ? 'OUT' : 'IN');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -4599,7 +4604,7 @@ class _StatusChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isOut ? Icons.logout : Icons.login,
+            isLate ? Icons.watch_later_outlined : (isOut ? Icons.logout : Icons.login),
             size: 14,
             color: fg,
           ),
