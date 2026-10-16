@@ -587,6 +587,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       'Bachelor of Science in Accounting Information System',
       'Bachelor of Secondary Education',
       'Bachelor of Science in Accountancy',
+      'Bachelor of Science in Civil Engineering',
+      'Bachelor of Science in Business Administration',
+      'Communication Arts Division',
+      'Irregular Student',
     ];
     const Map<String, String> courseCodes = {
       'Bachelor of Science in Criminology': 'BSC',
@@ -595,6 +599,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       'Bachelor of Science in Accounting Information System': 'BSAIS',
       'Bachelor of Secondary Education': 'BSED',
       'Bachelor of Science in Accountancy': 'BSA',
+      'Bachelor of Science in Civil Engineering': 'BSCE',
+      'Bachelor of Science in Business Administration': 'BSBA',
+      'Communication Arts Division': 'CAD',
+      'Irregular Student': 'IRREG',
     };
     String? selectedCourse;
     int? selectedYear;
@@ -607,6 +615,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       MapEntry('BSAIS', 'Bachelor of Science in Accounting Information System'),
       MapEntry('BSED', 'Bachelor of Secondary Education'),
       MapEntry('BSA', 'Bachelor of Science in Accountancy'),
+      MapEntry('BSCE', 'Bachelor of Science in Civil Engineering'),
+      MapEntry('BSBA', 'Bachelor of Science in Business Administration'),
+      MapEntry('CAD', 'Communication Arts Division'),
     ];
     // ---- Pre-registration OTP state (Student only) ----
     int studentStage = 1; // 1 = send-otp screen; 2 = otp + details screen

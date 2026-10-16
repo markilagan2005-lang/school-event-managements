@@ -47,6 +47,9 @@ const ALL_COURSES = [
   'Bachelor of Science in Accounting Information System',
   'Bachelor of Secondary Education',
   'Bachelor of Science in Accountancy',
+  'Bachelor of Science in Civil Engineering',
+  'Bachelor of Science in Business Administration',
+  'Communication Arts Division',
 ];
 const COURSE_CODES = {
   'Bachelor of Science in Criminology': 'BSC',
@@ -55,6 +58,9 @@ const COURSE_CODES = {
   'Bachelor of Science in Accounting Information System': 'BSAIS',
   'Bachelor of Secondary Education': 'BSED',
   'Bachelor of Science in Accountancy': 'BSA',
+  'Bachelor of Science in Civil Engineering': 'BSCE',
+  'Bachelor of Science in Business Administration': 'BSBA',
+  'Communication Arts Division': 'CAD',
 };
 const ALL_COURSES_SET = new Set(ALL_COURSES);
 

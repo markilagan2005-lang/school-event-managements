@@ -1,0 +1,4 @@
+02ad941 Hotfix: Long course names overflow on 1-line dropdowns/hints/subtitles
+3f08838 Hotfix: handledCourses format mismatch (short vs full names) causes wrong courses display
+deb9d9f Hotfix: Professor PATCH handledCourses Admin-Only guard
+d278466 Hotfix: Professor login stuck pending-after-approval bug

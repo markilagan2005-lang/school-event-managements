@@ -50,6 +50,9 @@ class User {
       'BSAIS': 'Bachelor of Science in Accounting Information System',
       'BSED': 'Bachelor of Secondary Education',
       'BSA': 'Bachelor of Science in Accountancy',
+      'BSCE': 'Bachelor of Science in Civil Engineering',
+      'BSBA': 'Bachelor of Science in Business Administration',
+      'CAD': 'Communication Arts Division',
     };
     const kFullSet = <String>{
       'Bachelor of Science in Criminology',
@@ -58,6 +61,9 @@ class User {
       'Bachelor of Science in Accounting Information System',
       'Bachelor of Secondary Education',
       'Bachelor of Science in Accountancy',
+      'Bachelor of Science in Civil Engineering',
+      'Bachelor of Science in Business Administration',
+      'Communication Arts Division',
     };
     List<String> parsedList;
     final raw = json['handledCourses'];

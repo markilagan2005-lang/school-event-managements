@@ -8,6 +8,9 @@ class Event {
     'Bachelor of Science in Accounting Information System',
     'Bachelor of Secondary Education',
     'Bachelor of Science in Accountancy',
+    'Bachelor of Science in Civil Engineering',
+    'Bachelor of Science in Business Administration',
+    'Communication Arts Division',
   ];
   static final Set<String> _canonicalCoursesSet = Set<String>.unmodifiable(_canonicalCourses);
 

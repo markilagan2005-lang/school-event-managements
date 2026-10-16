@@ -74,6 +74,9 @@ const List<String> kCoursesList = [
   'Bachelor of Science in Accounting Information System',
   'Bachelor of Secondary Education',
   'Bachelor of Science in Accountancy',
+  'Bachelor of Science in Civil Engineering',
+  'Bachelor of Science in Business Administration',
+  'Communication Arts Division',
 ];
 const Map<String, String> kCourseShort = {
   'Bachelor of Science in Criminology': 'BSC',
@@ -82,6 +85,9 @@ const Map<String, String> kCourseShort = {
   'Bachelor of Science in Accounting Information System': 'BSAIS',
   'Bachelor of Secondary Education': 'BSED',
   'Bachelor of Science in Accountancy': 'BSA',
+  'Bachelor of Science in Civil Engineering': 'BSCE',
+  'Bachelor of Science in Business Administration': 'BSBA',
+  'Communication Arts Division': 'CAD',
 };
 
 bool _eventVisibleForCourse(Event event, String studentCourse) {
