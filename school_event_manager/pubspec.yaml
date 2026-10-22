@@ -67,6 +67,7 @@ flutter:
   assets:
     - assets/images/lcc.png
     - assets/images/lcc_logo.png
+    - assets/images/lcc2026.png
     - assets/images/bg.png
 
   # An image asset can refer to one or more resolution-specific "variants", see

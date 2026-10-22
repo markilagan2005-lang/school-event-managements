@@ -6,7 +6,10 @@ class User {
   final bool isApproved;
   final String fullName;
   final String studentId;
+  final String professorId;
+  final String studentType;
   final String course;
+  final List<String> courses;
   final String section;
   final List<String> handledCourses;
 
@@ -18,7 +21,10 @@ class User {
     this.isApproved = true,
     this.fullName = '',
     this.studentId = '',
+    this.professorId = '',
+    this.studentType = 'regular',
     this.course = '',
+    this.courses = const [],
     this.section = '',
     this.handledCourses = const [],
   });
@@ -31,7 +37,10 @@ class User {
     'isApproved': isApproved,
     'fullName': fullName,
     'studentId': studentId,
+    'professorId': professorId,
+    'studentType': studentType,
     'course': course,
+    'courses': List<String>.from(courses),
     'section': section,
     'handledCourses': List<String>.from(handledCourses),
   };
@@ -65,6 +74,23 @@ class User {
       'Bachelor of Science in Business Administration',
       'Communication Arts Division',
     };
+    List<String> parsedStudentCourses;
+    final rawCourses = json['courses'];
+    if (rawCourses is List) {
+      final seen = <String>{};
+      final out = <String>[];
+      for (final entry in rawCourses) {
+        if (entry is! String) continue;
+        final s = entry.trim();
+        if (!kFullSet.contains(s) || seen.contains(s)) continue;
+        seen.add(s);
+        out.add(s);
+      }
+      parsedStudentCourses = out;
+    } else {
+      final singleCourse = (json['course'] ?? '').toString().trim();
+      parsedStudentCourses = kFullSet.contains(singleCourse) ? <String>[singleCourse] : const [];
+    }
     List<String> parsedList;
     final raw = json['handledCourses'];
     if (raw is List) {
@@ -94,11 +120,22 @@ class User {
           : (json['isApproved'] == false ? false : true),
       fullName: json['fullName'] ?? '',
       studentId: json['studentId'] ?? '',
+      professorId: json['professorId'] ?? '',
+      studentType: json['studentType'] == 'irregular' ? 'irregular' : 'regular',
       course: json['course'] ?? '',
+      courses: parsedStudentCourses,
       section: json['section'] ?? '',
       handledCourses: parsedList,
     );
   }
+
+  List<String> get effectiveStudentCourses {
+    if (courses.isNotEmpty) return List<String>.from(courses);
+    final single = course.trim();
+    return single.isEmpty ? const [] : <String>[single];
+  }
+
+  bool get isIrregularStudent => role == 'student' && studentType == 'irregular';
 
   User copyWith({
     String? id,
@@ -108,7 +145,10 @@ class User {
     bool? isApproved,
     String? fullName,
     String? studentId,
+    String? professorId,
+    String? studentType,
     String? course,
+    List<String>? courses,
     String? section,
     List<String>? handledCourses,
   }) {
@@ -120,7 +160,10 @@ class User {
       isApproved: isApproved ?? this.isApproved,
       fullName: fullName ?? this.fullName,
       studentId: studentId ?? this.studentId,
+      professorId: professorId ?? this.professorId,
+      studentType: studentType ?? this.studentType,
       course: course ?? this.course,
+      courses: courses ?? List<String>.from(this.courses),
       section: section ?? this.section,
       handledCourses: handledCourses ?? List<String>.from(this.handledCourses),
     );

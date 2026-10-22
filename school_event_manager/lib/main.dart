@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'services/data_service.dart';
@@ -9,6 +11,7 @@ class AppThemeAssets {
   static const String bgImage = 'assets/images/bg.png';
   static const String lccLogo = 'assets/images/lcc_logo.png';
   static const String lccIcon = 'assets/images/lcc.png';
+  static const String splashLogo = 'assets/images/lcc2026.png';
 }
 
 class AppColors {
@@ -53,6 +56,126 @@ Widget buildAppBackground({required Widget child, double blur = 0}) {
   );
 }
 
+/// Logo screen shown first while the app boots (before Login / Home).
+class SplashScreen extends StatelessWidget {
+  const SplashScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: buildAppBackground(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(34),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0x33000000),
+                      blurRadius: 28,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Image.asset(
+                  AppThemeAssets.splashLogo,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Icon(
+                    Icons.school,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ShaderMask(
+                blendMode: BlendMode.srcIn,
+                shaderCallback: (bounds) => const LinearGradient(
+                  colors: [Colors.white, Color(0xFFBFDBFE)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ).createShader(bounds),
+                child: const Text(
+                  'Attendify',
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.4,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Loading…',
+                style: TextStyle(color: Color(0xFFCFE0FF), fontSize: 14),
+              ),
+              const SizedBox(height: 26),
+              const SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(
+                  color: Colors.white70,
+                  strokeWidth: 2.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shows [SplashScreen] first, then routes to Login or Home once the
+/// splash delay has elapsed and the stored session has been restored.
+class SplashGate extends ConsumerStatefulWidget {
+  const SplashGate({super.key, this.minDuration = const Duration(milliseconds: 2200)});
+
+  final Duration minDuration;
+
+  @override
+  ConsumerState<SplashGate> createState() => _SplashGateState();
+}
+
+class _SplashGateState extends ConsumerState<SplashGate> {
+  bool _splashElapsed = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(widget.minDuration, () {
+      if (mounted) setState(() => _splashElapsed = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final authState = ref.watch(authProvider);
+    // Keep showing the splash until both the minimum delay has passed and the
+    // persisted session has finished restoring, so we never flash Login first.
+    if (!_splashElapsed || authState.isLoading) return const SplashScreen();
+    final isAuthenticated = authState.maybeWhen(
+      data: (user) => user != null,
+      orElse: () => false,
+    );
+    return isAuthenticated ? const HomeScreen() : const LoginScreen();
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await DataService.init();
@@ -71,13 +194,6 @@ class MyApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final authState = ref.watch(authProvider);
-
-    final isAuthenticated = authState.maybeWhen(
-      data: (user) => user != null,
-      orElse: () => false,
-    );
-
     return MaterialApp(
       title: 'Attendify',
       scaffoldMessengerKey: scaffoldMessengerKey,
@@ -179,7 +295,7 @@ class MyApp extends ConsumerWidget {
           showCloseIcon: true,
         ),
       ),
-      home: isAuthenticated ? const HomeScreen() : const LoginScreen(),
+      home: const SplashGate(),
     );
   }
 }

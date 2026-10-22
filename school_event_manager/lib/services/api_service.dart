@@ -25,7 +25,10 @@ class ApiService {
     String role, {
     String? fullName,
     String? studentId,
+    String? professorId,
+    String? studentType,
     String? course,
+    List<String>? courses,
     String? section,
     String? email,
     String? registrationOtp,
@@ -39,7 +42,10 @@ class ApiService {
       'role': role,
       if (fullName != null) 'fullName': fullName,
       if (studentId != null) 'studentId': studentId,
+      if (professorId != null) 'professorId': professorId,
+      if (studentType != null) 'studentType': studentType,
       if (course != null) 'course': course,
+      if (courses != null) 'courses': List<String>.from(courses),
       if (section != null) 'section': section,
       if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
       if (registrationOtp != null && registrationOtp.trim().isNotEmpty)
@@ -131,11 +137,27 @@ class ApiService {
     return user;
   }
 
-  static Future<Map<String, dynamic>> resetPassword(String username, String newPassword) async {
+  static Future<Map<String, dynamic>> requestPasswordResetOtp(String email) async {
+    final c = await _client();
+    return c.postJson('/request-password-reset-otp', {
+      'email': email.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> resetPassword(
+    String email,
+    String newPassword, {
+    required String currentPassword,
+    required String resetOtp,
+    required String resetOtpRef,
+  }) async {
     final c = await _client();
     return c.postJson('/reset-password', {
-      'username': username,
+      'email': email.trim(),
+      'currentPassword': currentPassword,
       'newPassword': newPassword,
+      'resetOtp': resetOtp,
+      'resetOtpRef': resetOtpRef,
     });
   }
 
@@ -319,6 +341,7 @@ class ApiService {
     String role, {
     String? fullName,
     String? studentId,
+    String? professorId,
     String? course,
     String? section,
     List<String>? handledCourses,
@@ -334,6 +357,7 @@ class ApiService {
         'role': role,
         if (fullName != null) 'fullName': fullName,
         if (studentId != null) 'studentId': studentId,
+        if (professorId != null) 'professorId': professorId,
         if (course != null) 'course': course,
         if (section != null) 'section': section,
         if (handledCourses != null) 'handledCourses': handledCourses,
@@ -359,7 +383,10 @@ class ApiService {
     bool? isVerified,
     String? fullName,
     String? studentId,
+    String? professorId,
+    String? studentType,
     String? course,
+    List<String>? courses,
     String? section,
     List<String>? handledCourses,
   }) async {
@@ -377,7 +404,10 @@ class ApiService {
         if (isVerified != null) 'isVerified': isVerified,
         if (fullName != null) 'fullName': fullName,
         if (studentId != null) 'studentId': studentId,
+        if (professorId != null) 'professorId': professorId,
+        if (studentType != null) 'studentType': studentType,
         if (course != null) 'course': course,
+        if (courses != null) 'courses': courses,
         if (section != null) 'section': section,
         if (handledCourses != null) 'handledCourses': handledCourses,
       },

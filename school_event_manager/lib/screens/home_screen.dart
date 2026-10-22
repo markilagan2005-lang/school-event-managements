@@ -90,11 +90,15 @@ const Map<String, String> kCourseShort = {
   'Communication Arts Division': 'CAD',
 };
 
-bool _eventVisibleForCourse(Event event, String studentCourse) {
+bool _eventVisibleForCourse(Event event, Iterable<String> studentCourses) {
   if (event.allCourses) return true;
-  final sc = studentCourse.trim();
-  if (sc.isEmpty) return false;
-  return event.courses.any((c) => c.trim() == sc);
+  final allowed = event.courses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
+  if (allowed.isEmpty) return false;
+  for (final raw in studentCourses) {
+    final course = raw.trim();
+    if (course.isNotEmpty && allowed.contains(course)) return true;
+  }
+  return false;
 }
 
 Future<Uint8List> _compressPosterBytes(Uint8List raw) async {
@@ -897,6 +901,48 @@ class ProfessorPendingApprovalScreen extends ConsumerWidget {
   }
 }
 
+/// Compact search field used to filter long event lists.
+class _EventSearchField extends StatefulWidget {
+  const _EventSearchField({
+    required this.controller,
+    required this.hintText,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_EventSearchField> createState() => _EventSearchFieldState();
+}
+
+class _EventSearchFieldState extends State<_EventSearchField> {
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      onChanged: (value) => setState(() => widget.onChanged(value)),
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: widget.hintText,
+        isDense: true,
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: widget.controller.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                icon: const Icon(Icons.clear),
+                onPressed: () {
+                  widget.controller.clear();
+                  setState(() => widget.onChanged(''));
+                },
+              ),
+      ),
+    );
+  }
+}
+
 class AdminEventsTab extends ConsumerStatefulWidget {
   const AdminEventsTab({super.key});
 
@@ -904,81 +950,25 @@ class AdminEventsTab extends ConsumerStatefulWidget {
   ConsumerState<AdminEventsTab> createState() => _AdminEventsTabState();
 }
 
-class ProfessorEventsTab extends ConsumerWidget {
+class ProfessorEventsTab extends ConsumerStatefulWidget {
   const ProfessorEventsTab({super.key, this.handledCourses = const []});
 
   final List<String> handledCourses;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final eventsState = ref.watch(eventProvider);
-    return eventsState.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, st) => Center(child: Text('Error: $e')),
-      data: (events) {
-        final allowed = handledCourses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
-        final filtered = events.where((e) {
-          if (allowed.isEmpty) return false;
-          if (e.allCourses) return true;
-          return e.courses.any((c) => allowed.contains(c.trim()));
-        }).toList();
-        final sorted = [...filtered]..sort((a, b) => b.date.compareTo(a.date));
-        return RefreshIndicator(
-          onRefresh: () => ref.read(eventProvider.notifier).loadEvents(),
-          child: sorted.isEmpty
-              ? ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    const SizedBox(height: 40),
-                    Center(
-                      child: Text(
-                        'No events yet',
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
-                      ),
-                    ),
-                  ],
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
-                  itemCount: sorted.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final event = sorted[index];
-                    return Card(
-                      child: ListTile(
-                        leading: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.secondaryContainer,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Icon(
-                            Icons.event,
-                            color: Theme.of(context).colorScheme.onSecondaryContainer,
-                          ),
-                        ),
-                        title: Text(event.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                        subtitle: Text(
-                          [
-                            '${event.date.toLocal()}'.split(' ')[0],
-                            event.status.toUpperCase(),
-                            if (event.startAt != null && event.endAt != null)
-                              '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
-                          ].join(' • '),
-                          style: const TextStyle(color: Colors.black54),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        );
-      },
-    );
-  }
+  ConsumerState<ProfessorEventsTab> createState() => _ProfessorEventsTabState();
 }
 
-class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
+class _ProfessorEventsTabState extends ConsumerState<ProfessorEventsTab> {
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final eventsState = ref.watch(eventProvider);
@@ -986,6 +976,100 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (events) {
+        final allowed = widget.handledCourses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
+        final query = _searchQuery.trim().toLowerCase();
+        final filtered = events.where((e) {
+          if (allowed.isEmpty) return false;
+          final courseMatch = e.allCourses || e.courses.any((c) => allowed.contains(c.trim()));
+          if (!courseMatch) return false;
+          if (query.isNotEmpty && !e.name.toLowerCase().contains(query)) return false;
+          return true;
+        }).toList();
+        final sorted = [...filtered]..sort((a, b) => b.date.compareTo(a.date));
+        return RefreshIndicator(
+          onRefresh: () => ref.read(eventProvider.notifier).loadEvents(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
+            children: [
+              _EventSearchField(
+                controller: _searchController,
+                hintText: 'Search events by name',
+                onChanged: (value) => setState(() => _searchQuery = value),
+              ),
+              const SizedBox(height: 16),
+              if (sorted.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 40),
+                  child: Center(
+                    child: Text(
+                      query.isEmpty ? 'No events yet' : 'No events match "$_searchQuery"',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
+                    ),
+                  ),
+                )
+              else
+                ...[
+                  for (final event in sorted)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Card(
+                        child: ListTile(
+                          leading: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.secondaryContainer,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Icon(
+                              Icons.event,
+                              color: Theme.of(context).colorScheme.onSecondaryContainer,
+                            ),
+                          ),
+                          title: Text(event.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                          subtitle: Text(
+                            [
+                              '${event.date.toLocal()}'.split(' ')[0],
+                              event.status.toUpperCase(),
+                              if (event.startAt != null && event.endAt != null)
+                                '${TimeOfDay.fromDateTime(event.startAt!).format(context)}-${TimeOfDay.fromDateTime(event.endAt!).format(context)}',
+                            ].join(' • '),
+                            style: const TextStyle(color: Colors.black54),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final eventsState = ref.watch(eventProvider);
+    return eventsState.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, st) => Center(child: Text('Error: $e')),
+      data: (events) {
+        final query = _searchQuery.trim().toLowerCase();
+        final filtered = query.isEmpty
+            ? events
+            : events.where((e) => e.name.toLowerCase().contains(query)).toList();
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
           child: Column(
@@ -1000,6 +1084,12 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12),
+              _EventSearchField(
+                controller: _searchController,
+                hintText: 'Search events by name',
+                onChanged: (value) => setState(() => _searchQuery = value),
               ),
               const SizedBox(height: 12),
               Card(
@@ -1031,19 +1121,20 @@ class _AdminEventsTabState extends ConsumerState<AdminEventsTab> {
               ),
               const SizedBox(height: 12),
               Expanded(
-                child: events.isEmpty
+                child: filtered.isEmpty
                     ? Center(
                         child: Text(
-                          'No events yet',
+                          events.isEmpty ? 'No events yet' : 'No events match "$_searchQuery"',
+                          textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
                         ),
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.only(bottom: 16),
-                        itemCount: events.length,
+                        itemCount: filtered.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
-                          final event = events[index];
+                          final event = filtered[index];
                           final scheme = Theme.of(context).colorScheme;
                           final courseCodes = event.courses.map((c) => kCourseShort[c] ?? c).toList();
                           final shownCodes = courseCodes.take(3).toList();
@@ -2189,7 +2280,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                             ),
                             title: Text(u.fullName.isEmpty ? u.username : u.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
                             subtitle: Text(
-                              '${(u.role == 'faculty' ? 'professor' : u.role).toUpperCase()} • ${u.username}${u.role == 'faculty' && !u.isApproved ? ' • Pending approval' : ''}',
+                              '${(u.role == 'faculty' ? 'professor' : u.role).toUpperCase()} • ${u.role == 'faculty' && u.professorId.isNotEmpty ? u.professorId : u.username}${u.role == 'faculty' && !u.isApproved ? ' • Pending approval' : ''}',
                               style: const TextStyle(color: Colors.black54),
                             ),
                             trailing: PopupMenuButton<String>(
@@ -2286,6 +2377,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
     final passwordController = TextEditingController();
     final fullNameController = TextEditingController();
     final studentIdController = TextEditingController();
+    final professorIdController = TextEditingController();
     String? selectedCourse;
     int? selectedYear;
     String? selectedSection;
@@ -2348,6 +2440,18 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                         decoration: const InputDecoration(
                           labelText: 'Student ID',
                           prefixIcon: Icon(Icons.numbers),
+                        ),
+                        textInputAction: TextInputAction.next,
+                      ),
+                    ),
+                  if (role == 'faculty')
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: TextField(
+                        controller: professorIdController,
+                        decoration: const InputDecoration(
+                          labelText: 'Professor ID',
+                          prefixIcon: Icon(Icons.badge_outlined),
                         ),
                         textInputAction: TextInputAction.next,
                       ),
@@ -2528,6 +2632,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                 final password = passwordController.text;
                 final fullName = fullNameController.text.trim();
                 final studentId = studentIdController.text.trim();
+                final professorId = professorIdController.text.trim();
                 if (username.isEmpty || password.isEmpty) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -2561,6 +2666,14 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   }
                   return;
                 }
+                if (role == 'faculty' && professorId.isEmpty) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Enter a Professor ID for the professor account')),
+                    );
+                  }
+                  return;
+                }
                 try {
                   await ApiService.createUser(
                     username,
@@ -2568,6 +2681,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     role,
                     fullName: fullName.isEmpty ? null : fullName,
                     studentId: role == 'student' ? studentId : null,
+                    professorId: role == 'faculty' ? professorId : null,
                     course: role == 'student' ? selectedCourse : null,
                     section: role == 'student' ? selectedSection : null,
                     handledCourses: role == 'faculty' ? handledCourses.toList() : null,
@@ -2696,6 +2810,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
     final passwordController = TextEditingController();
     final fullNameController = TextEditingController(text: user.fullName);
     final studentIdController = TextEditingController(text: user.studentId);
+    final professorIdController = TextEditingController(text: user.professorId);
     final courseController = TextEditingController(text: user.course);
     final sectionController = TextEditingController(text: user.section);
     String role = user.role;
@@ -2761,6 +2876,11 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   controller: studentIdController,
                   decoration: const InputDecoration(labelText: 'Student ID'),
                 ),
+                if (role == 'faculty')
+                  TextField(
+                    controller: professorIdController,
+                    decoration: const InputDecoration(labelText: 'Professor ID'),
+                  ),
                 TextField(
                   controller: courseController,
                   decoration: const InputDecoration(labelText: 'Course'),
@@ -2828,6 +2948,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                 final nextPassword = passwordController.text;
                 final nextFullName = fullNameController.text.trim();
                 final nextStudentId = studentIdController.text.trim();
+                final nextProfessorId = professorIdController.text.trim();
                 final nextCourse = courseController.text.trim();
                 final nextSection = sectionController.text.trim();
 
@@ -2856,6 +2977,13 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                   );
                   return;
                 }
+                if (role == 'faculty' && nextProfessorId.isEmpty) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Professor ID is required for professor accounts')),
+                  );
+                  return;
+                }
                 if (nextPassword.isNotEmpty && nextPassword.length < 6) {
                   if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -2873,6 +3001,7 @@ class _AdminUsersTabState extends ConsumerState<AdminUsersTab> {
                     role: role,
                     fullName: nextFullName,
                     studentId: nextStudentId,
+                    professorId: role == 'faculty' ? nextProfessorId : '',
                     course: nextCourse,
                     section: nextSection,
                     isApproved: role == 'faculty' ? isApproved : true,
@@ -3142,6 +3271,7 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
             widget.user.id,
             facultyId: pickedFacultyId,
             studentCourse: widget.user.course,
+            studentCourses: widget.user.effectiveStudentCourses,
           );
 
       setState(() {
@@ -3177,8 +3307,21 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
     final stage = open == null ? 'Check-in' : 'Check-out';
 
     final eventsAsync = ref.read(eventProvider);
-    final events = eventsAsync.valueOrNull ?? const <Event>[];
-    final matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    var events = eventsAsync.valueOrNull ?? const <Event>[];
+    Event? matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    if (matchingEvent == null) {
+      await ref.read(eventProvider.notifier).loadEvents();
+      events = ref.read(eventProvider).valueOrNull ?? const <Event>[];
+      matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    }
+    if (matchingEvent == null) {
+      if (mounted) {
+        setState(() {
+          _message = 'Event details could not be loaded. Refresh the page and try again.';
+        });
+      }
+      return null;
+    }
     final eventCourses = matchingEvent?.courses ?? const <String>[];
     final eventAllCourses = matchingEvent?.allCourses ?? true;
 
@@ -3188,7 +3331,7 @@ class _StudentScannerTabState extends ConsumerState<StudentScannerTab> {
       if (eventAllCourses == true) return true;
       final profCourses = f.handledCourses.toSet();
       if (profCourses.isEmpty) return false;
-      if (eventCourses.isEmpty) return true;
+      if (eventCourses.isEmpty) return false;
       for (final ec in eventCourses) {
         if (profCourses.contains(ec)) return true;
       }
@@ -3313,21 +3456,35 @@ class StudentAttendanceTab extends ConsumerWidget {
   }
 }
 
-class StudentEventsTab extends ConsumerWidget {
+class StudentEventsTab extends ConsumerStatefulWidget {
   const StudentEventsTab({super.key, required this.user});
 
   final User user;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<StudentEventsTab> createState() => _StudentEventsTabState();
+}
+
+class _StudentEventsTabState extends ConsumerState<StudentEventsTab> {
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final eventsState = ref.watch(eventProvider);
     return eventsState.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (events) {
-        final studentCourse = user.course;
+        final studentCourses = widget.user.effectiveStudentCourses;
         final visible = events
-            .where((e) => e.status != 'draft' && _eventVisibleForCourse(e, studentCourse))
+            .where((e) => e.status != 'draft' && _eventVisibleForCourse(e, studentCourses))
             .toList();
         final visibleIds = visible.map((e) => e.id).toSet();
         final subEventParentIds = visible
@@ -3343,71 +3500,82 @@ class StudentEventsTab extends ConsumerWidget {
           }
           return visibleIds.contains(e.id);
         }).toList();
-        final rootEvents = eventsForDisplay.where((e) => e.parentId == null).toList()
+        final query = _searchQuery.trim().toLowerCase();
+        final rootEvents = eventsForDisplay.where((e) {
+          if (e.parentId != null) return false;
+          if (query.isEmpty) return true;
+          return e.name.toLowerCase().contains(query);
+        }).toList()
           ..sort((a, b) => b.date.compareTo(a.date));
         final categories = rootEvents.where((e) => e.isCategory).toList();
         final regular = rootEvents.where((e) => !e.isCategory).toList();
         return RefreshIndicator(
           onRefresh: () => ref.read(eventProvider.notifier).loadEvents(),
-          child: categories.isEmpty && regular.isEmpty
-              ? ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    const SizedBox(height: 40),
-                    Center(
-                      child: Text(
-                        'No published events yet',
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
-                      ),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              _EventSearchField(
+                controller: _searchController,
+                hintText: 'Search events by name',
+                onChanged: (value) => setState(() => _searchQuery = value),
+              ),
+              const SizedBox(height: 16),
+              if (categories.isEmpty && regular.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 40),
+                  child: Center(
+                    child: Text(
+                      query.isEmpty ? 'No published events yet' : 'No events match "$_searchQuery"',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.black54),
                     ),
-                  ],
+                  ),
                 )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  children: [
-                    if (categories.isNotEmpty) ...[
-                      Text(
-                        'Event Categories',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 12),
-                      ...categories.map((e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _EventListTile(
-                              event: e,
-                              onTap: () {
-                                Navigator.of(context).push<void>(
-                                  MaterialPageRoute(
-                                    builder: (_) => _CategoryMenuScreen(category: e, user: user),
-                                  ),
-                                );
-                              },
-                            ),
-                          )),
-                      const SizedBox(height: 4),
-                    ],
-                    if (regular.isNotEmpty) ...[
-                      Text(
-                        'Events',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 12),
-                      ...regular.map((e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _EventListTile(
-                              event: e,
-                              onTap: () {
-                                Navigator.of(context).push<void>(
-                                  MaterialPageRoute(
-                                    builder: (_) => _EventDetailScreen(event: e, user: user),
-                                  ),
-                                );
-                              },
-                            ),
-                          )),
-                    ],
-                  ],
-                ),
+              else ...[
+                if (categories.isNotEmpty) ...[
+                  Text(
+                    'Event Categories',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  ...categories.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _EventListTile(
+                          event: e,
+                          onTap: () {
+                            Navigator.of(context).push<void>(
+                              MaterialPageRoute(
+                                builder: (_) => _CategoryMenuScreen(category: e, user: widget.user),
+                              ),
+                            );
+                          },
+                        ),
+                      )),
+                  const SizedBox(height: 4),
+                ],
+                if (regular.isNotEmpty) ...[
+                  Text(
+                    'Events',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  ...regular.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _EventListTile(
+                          event: e,
+                          onTap: () {
+                            Navigator.of(context).push<void>(
+                              MaterialPageRoute(
+                                builder: (_) => _EventDetailScreen(event: e, user: widget.user),
+                              ),
+                            );
+                          },
+                        ),
+                      )),
+                ],
+              ],
+            ],
+          ),
         );
       },
     );
@@ -3437,12 +3605,12 @@ class _CategoryMenuScreen extends ConsumerWidget {
     final posterBytes = _decodePoster();
     final textTheme = Theme.of(context).textTheme;
     final eventsState = ref.watch(eventProvider);
-    final studentCourse = user.course;
+    final studentCourses = user.effectiveStudentCourses;
     final subEvents = eventsState.valueOrNull
             ?.where((e) =>
                 e.parentId == category.id &&
                 e.status != 'draft' &&
-                _eventVisibleForCourse(e, studentCourse))
+                _eventVisibleForCourse(e, studentCourses))
             .toList()
       ?..sort((a, b) => b.date.compareTo(a.date));
     return Scaffold(
@@ -4244,6 +4412,7 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
             widget.user.id,
             facultyId: pickedFacultyId,
             studentCourse: widget.user.course,
+            studentCourses: widget.user.effectiveStudentCourses,
           );
 
       setState(() {
@@ -4276,8 +4445,21 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
     final stage = open == null ? 'Check-in' : 'Check-out';
 
     final eventsAsync = ref.read(eventProvider);
-    final events = eventsAsync.valueOrNull ?? const <Event>[];
-    final matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    var events = eventsAsync.valueOrNull ?? const <Event>[];
+    Event? matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    if (matchingEvent == null) {
+      await ref.read(eventProvider.notifier).loadEvents();
+      events = ref.read(eventProvider).valueOrNull ?? const <Event>[];
+      matchingEvent = events.where((e) => e.id == eventId).firstOrNull;
+    }
+    if (matchingEvent == null) {
+      if (mounted) {
+        setState(() {
+          _scanMessage = 'Event details could not be loaded. Refresh the page and try again.';
+        });
+      }
+      return null;
+    }
     final eventCourses = matchingEvent?.courses ?? const <String>[];
     final eventAllCourses = matchingEvent?.allCourses ?? true;
 
@@ -4287,7 +4469,7 @@ class _EventDetailScreenState extends ConsumerState<_EventDetailScreen> {
       if (eventAllCourses == true) return true;
       final profCourses = f.handledCourses.toSet();
       if (profCourses.isEmpty) return false;
-      if (eventCourses.isEmpty) return true;
+      if (eventCourses.isEmpty) return false;
       for (final ec in eventCourses) {
         if (profCourses.contains(ec)) return true;
       }
@@ -4399,9 +4581,18 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, st) => Center(child: Text('Error: $e')),
       data: (attendance) {
-        final allowedCourses = widget.user.handledCourses.toSet();
-        final hasCourses = allowedCourses.isNotEmpty;
-        final validFilters = {'All', ...allowedCourses};
+        // A student's attendance is only visible to the professor who checked
+        // them in. Course assignment alone no longer grants access.
+        final visible = attendance
+            .where((r) => r.checkedInByFacultyId == widget.user.id)
+            .toList();
+        final courses = visible
+            .map((r) => r.studentCourse.trim())
+            .where((c) => c.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+        final validFilters = {'All', ...courses};
         final effectiveFilter =
             validFilters.contains(_courseFilter) ? _courseFilter : 'All';
         if (effectiveFilter != _courseFilter) {
@@ -4409,20 +4600,9 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
             if (mounted) setState(() => _courseFilter = effectiveFilter);
           });
         }
-        final scopedToCourses = attendance.where((r) {
-          if (!hasCourses) return false;
-          final course = r.studentCourse.trim();
-          return course.isEmpty ? false : allowedCourses.contains(course);
-        }).toList();
-        final mineByOwnership = attendance
-            .where((r) => r.checkedOutByFacultyId == widget.user.id || (r.checkOutAt == null && r.checkedInByFacultyId == widget.user.id))
-            .where((r) => !scopedToCourses.contains(r))
-            .toList();
-        final visible = [...scopedToCourses, ...mineByOwnership];
-        final courses = allowedCourses.toList()..sort();
         final filtered = effectiveFilter == 'All'
             ? visible
-            : visible.where((r) => r.studentCourse == effectiveFilter).toList();
+            : visible.where((r) => r.studentCourse.trim() == effectiveFilter).toList();
         final sorted = [...filtered]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
         return RefreshIndicator(
@@ -4510,23 +4690,12 @@ class _ProfessorAttendanceTabState extends ConsumerState<ProfessorAttendanceTab>
                 ),
               ),
               const SizedBox(height: 12),
-              if (!hasCourses)
-                Card(
-                  color: const Color(0xFFFFF4E6),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Text(
-                      'No handled courses set yet. Use the drawer menu "Handled Courses" to select the courses you teach so attendance can appear here.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: const Color(0xFF92400E)),
-                    ),
-                  ),
-                )
-              else if (sorted.isEmpty)
+              if (sorted.isEmpty)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Text(
-                      'No attendance yet for ${courses.map(shortCourseName).join(', ')}.',
+                      'No attendance yet. Students you check in will appear here.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54),
                     ),
                   ),
@@ -4586,13 +4755,16 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = isLate
-        ? const Color(0xFFFDECEC)
-        : (isOut ? const Color(0xFFE6F7EE) : const Color(0xFFE8F0FF));
-    final fg = isLate
-        ? const Color(0xFFB3261E)
-        : (isOut ? const Color(0xFF0F7A3A) : const Color(0xFF1E4DB7));
-    final text = isLate ? 'LATE' : (isOut ? 'OUT' : 'IN');
+    // "LATE" only reflects a late time-in: once the student has timed out or
+    // checked out, the badge shows OUT instead.
+    final showLate = isLate && !isOut;
+    final bg = isOut
+        ? const Color(0xFFE6F7EE)
+        : (showLate ? const Color(0xFFFDECEC) : const Color(0xFFE8F0FF));
+    final fg = isOut
+        ? const Color(0xFF0F7A3A)
+        : (showLate ? const Color(0xFFB3261E) : const Color(0xFF1E4DB7));
+    final text = isOut ? 'OUT' : (showLate ? 'LATE' : 'IN');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -4604,7 +4776,7 @@ class _StatusChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isLate ? Icons.watch_later_outlined : (isOut ? Icons.logout : Icons.login),
+            isOut ? Icons.logout : (showLate ? Icons.watch_later_outlined : Icons.login),
             size: 14,
             color: fg,
           ),

@@ -111,20 +111,62 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
   }
 
   String? _courseEligibilityError(Event event, String studentCourse) {
-    final sc = studentCourse.trim();
+    return _courseEligibilityErrorForList(
+      event,
+      studentCourses: studentCourse.trim().isEmpty
+          ? const <String>[]
+          : <String>[studentCourse.trim()],
+    );
+  }
+
+  String? _courseEligibilityErrorForList(
+    Event event, {
+    required List<String> studentCourses,
+  }) {
+    final uniqueCourses = studentCourses
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList();
     if (event.allCourses) return null;
     final allowed = event.courses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
     if (allowed.isEmpty) {
       return 'This event has no courses assigned. Ask an admin to configure it.';
     }
-    if (sc.isEmpty) {
-      return 'Your account has no course assigned. Ask an admin to set your course before scanning.';
+    if (uniqueCourses.isEmpty) {
+      return 'Your account has no eligible course assigned. Ask an admin to set your course before scanning.';
     }
-    if (!allowed.contains(sc)) {
+    final hasMatch = uniqueCourses.any(allowed.contains);
+    if (!hasMatch) {
       final sorted = allowed.toList()..sort();
-      return 'This event is only for ${sorted.join(', ')}. Your course ($sc) cannot scan this QR.';
+      return 'This event is only for ${sorted.join(', ')}. Your course(s) (${uniqueCourses.join(', ')}) cannot scan this QR.';
     }
     return null;
+  }
+
+  String _matchStudentCourseForEvent(
+    Event? event, {
+    required List<String> studentCourses,
+    required String fallbackCourse,
+  }) {
+    final normalized = studentCourses
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toList();
+    final fallback = fallbackCourse.trim();
+    if (event == null) {
+      if (fallback.isNotEmpty) return fallback;
+      return normalized.isNotEmpty ? normalized.first : '';
+    }
+    if (event.allCourses) {
+      if (fallback.isNotEmpty) return fallback;
+      return normalized.isNotEmpty ? normalized.first : '';
+    }
+    final allowed = event.courses.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
+    for (final course in normalized) {
+      if (allowed.contains(course)) return course;
+    }
+    return fallback;
   }
 
   Future<String> markAttendance(
@@ -135,6 +177,7 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
     String userId, {
     String? facultyId,
     required String studentCourse,
+    List<String> studentCourses = const [],
   }) async {
     state = const AsyncValue.loading();
     try {
@@ -143,8 +186,19 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
       final token = prefs.getString('auth_token');
       final online = token != null;
       final event = await _lookupEvent(eventId, online: online);
+      final resolvedStudentCourses = studentCourses
+          .map((c) => c.trim())
+          .where((c) => c.isNotEmpty)
+          .toSet()
+          .toList();
+      if (resolvedStudentCourses.isEmpty && studentCourse.trim().isNotEmpty) {
+        resolvedStudentCourses.add(studentCourse.trim());
+      }
       if (event != null) {
-        final err = _courseEligibilityError(event, studentCourse);
+        final err = _courseEligibilityErrorForList(
+          event,
+          studentCourses: resolvedStudentCourses,
+        );
         if (err != null) {
           state = AsyncValue.error(Exception(err), StackTrace.current);
           return err;
@@ -181,6 +235,11 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
       final offlineOpen = _findOpenRecord(existing, eventId, studentId, now);
       final isCheckOut = offlineOpen != null;
       final late = !isCheckOut && _isLateCheckIn(event, now);
+      final matchedStudentCourse = _matchStudentCourseForEvent(
+        event,
+        studentCourses: resolvedStudentCourses,
+        fallbackCourse: studentCourse,
+      );
 
       final record = AttendanceRecord(
         id: Uuid.v4(),
@@ -188,7 +247,7 @@ class AttendanceNotifier extends StateNotifier<AsyncValue<List<AttendanceRecord>
         eventName: eventName,
         studentId: studentId,
         studentName: studentName,
-        studentCourse: studentCourse,
+        studentCourse: matchedStudentCourse,
         status: isCheckOut ? 'out' : 'in',
         isLate: late,
         expectedOutAt: isCheckOut ? null : event?.endAt,

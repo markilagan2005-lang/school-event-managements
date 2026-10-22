@@ -7,8 +7,6 @@ import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart' show AuthService;
 
-enum StudentLoginMode { studentId, email }
-
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -21,7 +19,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _canSubmit = false;
   bool _obscurePassword = true;
-  StudentLoginMode _studentMode = StudentLoginMode.email;
 
   @override
   void initState() {
@@ -33,49 +30,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   void _onIdentifierChanged() {
     _syncCanSubmit();
-    // Always rebuild on identifier change so strict-mode warning banner + sign-in button rerender.
+    // Rebuild on identifier change so the sign-in button state updates.
     setState(() {});
   }
 
   void _syncCanSubmit() {
     final id = _identifierController.text.trim();
     final passwordOk = _passwordController.text.isNotEmpty;
-    final idOk = id.isNotEmpty && !_strictModeViolates(id).isViolation;
-    final next = idOk && passwordOk;
+    final next = id.isNotEmpty && passwordOk;
     if (next == _canSubmit) return;
     setState(() => _canSubmit = next);
-  }
-
-  String get _loginModeParam {
-    switch (_studentMode) {
-      case StudentLoginMode.email:
-        return 'email';
-      case StudentLoginMode.studentId:
-        return 'studentId';
-    }
-  }
-
-  ({bool isViolation, String message}) _strictModeViolates(String identifier) {
-    final v = identifier.trim();
-    if (v.isEmpty) return (isViolation: false, message: '');
-    switch (_studentMode) {
-      case StudentLoginMode.email:
-        if (v.contains('@')) return (isViolation: false, message: '');
-        final looksLikeStudentId = RegExp(r'^[0-9][0-9\-]{3,19}$').hasMatch(v);
-        if (looksLikeStudentId) {
-          return (
-            isViolation: true,
-            message: 'You selected Email mode but this looks like a Student ID. Switch to the Student ID tab first.'
-          );
-        }
-        return (isViolation: false, message: '');
-      case StudentLoginMode.studentId:
-        if (!v.contains('@')) return (isViolation: false, message: '');
-        return (
-          isViolation: true,
-          message: 'You selected Student ID mode but entered an email address. Switch to the Email tab first.'
-        );
-    }
   }
 
   bool _isStrongPassword(String password) {
@@ -172,95 +136,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            SegmentedButton<StudentLoginMode>(
-                              segments: const [
-                                ButtonSegment(
-                                  value: StudentLoginMode.email,
-                                  label: Text('Email'),
-                                  icon: Icon(Icons.email_outlined, size: 18),
-                                ),
-                                ButtonSegment(
-                                  value: StudentLoginMode.studentId,
-                                  label: Text('Student ID'),
-                                  icon: Icon(Icons.badge_outlined, size: 18),
-                                ),
-                              ],
-                              selected: {_studentMode},
-                              onSelectionChanged: (set) {
-                                if (set.isEmpty) return;
-                                final next = set.first;
-                                final oldVal = _identifierController.text.trim();
-                                setState(() {
-                                  _studentMode = next;
-                                  if (next == StudentLoginMode.email &&
-                                      oldVal.isNotEmpty &&
-                                      !oldVal.contains('@')) {
-                                    _identifierController.clear();
-                                  }
-                                });
-                              },
+                            TextField(
+                              controller: _identifierController,
+                              keyboardType: TextInputType.emailAddress,
+                              autocorrect: false,
+                              textInputAction: TextInputAction.next,
+                              autofillHints: const [AutofillHints.username],
+                              decoration: const InputDecoration(
+                                labelText: 'ID or Email',
+                                prefixIcon: Icon(Icons.person_outline),
+                                helperText: 'Use your Student ID, Professor ID, or email address.',
+                              ),
                             ),
-                            const SizedBox(height: 18),
-                            AnimatedCrossFade(
-                              duration: const Duration(milliseconds: 220),
-                              firstChild: TextField(
-                                key: const ValueKey('email'),
-                                controller: _identifierController,
-                                keyboardType: TextInputType.emailAddress,
-                                autocorrect: false,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: const [AutofillHints.email],
-                                decoration: const InputDecoration(
-                                  labelText: 'Gmail address',
-                                  prefixIcon: Icon(Icons.email_outlined),
-                                  helperText: 'Student ID also works — switch above.',
-                                ),
-                              ),
-                              secondChild: TextField(
-                                key: const ValueKey('studentId'),
-                                controller: _identifierController,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: const [AutofillHints.username],
-                                decoration: const InputDecoration(
-                                  labelText: 'Student ID',
-                                  prefixIcon: Icon(Icons.badge_outlined),
-                                  helperText: 'Enter the Student ID on your school ID card.',
-                                ),
-                              ),
-                              crossFadeState: _studentMode == StudentLoginMode.email
-                                  ? CrossFadeState.showFirst
-                                  : CrossFadeState.showSecond,
-                            ),
-                            if (_strictModeViolates(_identifierController.text).isViolation) ...[
-                              const SizedBox(height: 10),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFEF2F2),
-                                  border: Border.all(color: const Color(0xFFFECACA)),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Icon(Icons.error_outline, color: Color(0xFFB91C1C), size: 20),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        _strictModeViolates(_identifierController.text).message,
-                                        style: const TextStyle(
-                                          color: Color(0xFF991B1B),
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          height: 1.35,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
                             const SizedBox(height: 12),
                             TextField(
                               controller: _passwordController,
@@ -286,7 +173,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       Future<AuthActionResult> doLogin() => authNotifier.login(
                                             _identifierController.text,
                                             _passwordController.text,
-                                            loginMode: _loginModeParam,
                                           );
                                       AuthActionResult result = await doLogin();
                                       if (!ctx.mounted) return;
@@ -590,7 +476,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       'Bachelor of Science in Civil Engineering',
       'Bachelor of Science in Business Administration',
       'Communication Arts Division',
-      'Irregular Student',
     ];
     const Map<String, String> courseCodes = {
       'Bachelor of Science in Criminology': 'BSC',
@@ -602,8 +487,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       'Bachelor of Science in Civil Engineering': 'BSCE',
       'Bachelor of Science in Business Administration': 'BSBA',
       'Communication Arts Division': 'CAD',
-      'Irregular Student': 'IRREG',
     };
+    String studentType = 'regular'; // 'regular' (one course) or 'irregular' (many)
+    final Set<String> selectedStudentCourses = {};
     String? selectedCourse;
     int? selectedYear;
     String? selectedSection;
@@ -640,8 +526,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     rootMessenger?.clearSnackBars();
 
     List<String> buildSections() {
-      if (selectedCourse == null || selectedYear == null) return const [];
-      final code = courseCodes[selectedCourse!] ?? 'BS';
+      if (selectedYear == null) return const [];
+      final String code;
+      if (studentType == 'irregular') {
+        code = 'IRREG';
+      } else {
+        if (selectedCourse == null) return const [];
+        code = courseCodes[selectedCourse!] ?? 'BS';
+      }
       return List<String>.generate(
         26,
         (i) => '$code $selectedYear${String.fromCharCode(65 + i)}',
@@ -831,14 +723,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ],
                             ),
                           ),
-                        // -------- Role selector (always visible so user can switch) --------
+                        // -------- Role selector (Professor accounts are created by an administrator) --------
                         DropdownButtonFormField<String>(
                           initialValue: role,
                           isExpanded: true,
                           decoration: const InputDecoration(labelText: 'Role'),
                           items: const [
                             DropdownMenuItem(value: 'student', child: Text('Student')),
-                            DropdownMenuItem(value: 'faculty', child: Text('Professor')),
                           ],
                           onChanged: (value) {
                             if (value == null) return;
@@ -1029,44 +920,114 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             ),
                             const SizedBox(height: 10),
-                            DropdownButtonFormField<String>(
-                              initialValue: selectedCourse,
-                              isExpanded: true,
-                              menuMaxHeight: 320,
-                              decoration: const InputDecoration(
-                                labelText: 'Course',
-                                prefixIcon: Icon(Icons.school_outlined),
-                              ),
-                              hint: const Text('Select course'),
-                              items: courses
-                                  .map(
-                                    (c) => DropdownMenuItem(
-                                      value: c,
-                                      child: Text(
-                                        c,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              selectedItemBuilder: (context) => courses
-                                  .map(
-                                    (c) => Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        c,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (v) => setStateDialog(() {
-                                selectedCourse = v;
-                                selectedSection = null;
-                              }),
+                            Row(
+                              children: [
+                                const Icon(Icons.category_outlined, size: 20),
+                                const SizedBox(width: 8),
+                                const Text('Student Type',
+                                    style: TextStyle(fontWeight: FontWeight.w600)),
+                                const Spacer(),
+                                SegmentedButton<String>(
+                                  showSelectedIcon: false,
+                                  segments: const [
+                                    ButtonSegment(value: 'regular', label: Text('Regular')),
+                                    ButtonSegment(value: 'irregular', label: Text('Irregular')),
+                                  ],
+                                  selected: {studentType},
+                                  onSelectionChanged: (set) {
+                                    if (set.isEmpty) return;
+                                    setStateDialog(() {
+                                      studentType = set.first;
+                                      selectedCourse = null;
+                                      selectedStudentCourses.clear();
+                                      selectedSection = null;
+                                    });
+                                  },
+                                ),
+                              ],
                             ),
+                            const SizedBox(height: 10),
+                            if (studentType == 'regular')
+                              DropdownButtonFormField<String>(
+                                initialValue: selectedCourse,
+                                isExpanded: true,
+                                menuMaxHeight: 320,
+                                decoration: const InputDecoration(
+                                  labelText: 'Course',
+                                  prefixIcon: Icon(Icons.school_outlined),
+                                ),
+                                hint: const Text('Select course'),
+                                items: courses
+                                    .map(
+                                      (c) => DropdownMenuItem(
+                                        value: c,
+                                        child: Text(
+                                          c,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                selectedItemBuilder: (context) => courses
+                                    .map(
+                                      (c) => Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          c,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (v) => setStateDialog(() {
+                                  selectedCourse = v;
+                                  selectedSection = null;
+                                }),
+                              )
+                            else ...[
+                              const Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Courses (select one or more):',
+                                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.grey.shade300),
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: Theme.of(context).colorScheme.surface,
+                                ),
+                                constraints: const BoxConstraints(maxHeight: 220),
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    children: [
+                                      for (final c in courses)
+                                        CheckboxListTile.adaptive(
+                                          dense: true,
+                                          value: selectedStudentCourses.contains(c),
+                                          title: Text(
+                                            c,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          onChanged: (v) => setStateDialog(() {
+                                            if (v == true) {
+                                              selectedStudentCourses.add(c);
+                                            } else {
+                                              selectedStudentCourses.remove(c);
+                                            }
+                                            selectedSection = null;
+                                          }),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 10),
                             DropdownButtonFormField<int>(
                               initialValue: selectedYear,
@@ -1306,14 +1267,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             });
                             return;
                           }
+                          final hasCourseSelection = studentType == 'irregular'
+                              ? selectedStudentCourses.isNotEmpty
+                              : selectedCourse != null;
                           if (fullName.isEmpty ||
                               studentId.isEmpty ||
-                              selectedCourse == null ||
+                              !hasCourseSelection ||
                               selectedYear == null ||
                               selectedSection == null) {
                             setStateDialog(() {
-                              submitBannerError =
-                                  'Fill every field below: Full name, Student ID, Course, Year Level, Section.';
+                              submitBannerError = studentType == 'irregular'
+                                  ? 'Fill every field below: Full name, Student ID, at least one Course, Year Level, Section.'
+                                  : 'Fill every field below: Full name, Student ID, Course, Year Level, Section.';
                             });
                             scrollToPassword();
                             return;
@@ -1349,7 +1314,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           role,
                           fullName: fullName.isEmpty ? null : fullName,
                           studentId: role == 'student' ? studentId : null,
-                          course: role == 'student' ? selectedCourse : null,
+                          studentType: role == 'student' ? studentType : null,
+                          course: role == 'student' && studentType == 'regular' ? selectedCourse : null,
+                          courses: role == 'student' && studentType == 'irregular'
+                              ? selectedStudentCourses.toList()
+                              : null,
                           section: role == 'student' ? selectedSection : null,
                           email: role == 'student' ? email : null,
                           registrationOtp: role == 'student' ? otp : null,
@@ -1725,107 +1694,367 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _showResetPasswordDialog(BuildContext context) async {
-    final usernameController = TextEditingController(text: _identifierController.text.trim());
+    final seededIdentifier = _identifierController.text.trim();
+    final emailController = TextEditingController(
+      text: seededIdentifier.contains('@') ? seededIdentifier : '',
+    );
+    final otpController = TextEditingController();
+    final currentPasswordController = TextEditingController();
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
+    bool obscureCurrent = true;
     bool obscureNew = true;
     bool obscureConfirm = true;
+    int stage = 1;
+    bool sending = false;
+    bool submitting = false;
+    String? resetRef;
+    int cooldownSec = 0;
+    Timer? cooldownTimer;
+    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+
+    String stepLabel(int value) {
+      switch (value) {
+        case 1:
+          return 'Step 1 of 3: Verify your email address';
+        case 2:
+          return 'Step 2 of 3: Enter the OTP and your current password';
+        case 3:
+          return 'Step 3 of 3: Enter and confirm your new password';
+        default:
+          return '';
+      }
+    }
+
+    String friendlyResetError(Object error) {
+      final raw = error.toString().replaceFirst('Exception: ', '').trim();
+      if (raw.contains('Cannot POST /api/request-password-reset-otp')) {
+        return 'The password reset service is not available on the server yet. Please redeploy the backend first.';
+      }
+      if (raw.contains('Cannot POST /api/reset-password')) {
+        return 'The reset password service is not available on the server yet. Please redeploy the backend first.';
+      }
+      return raw;
+    }
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          title: const Text('Reset Password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: usernameController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email or Username',
-                  prefixIcon: Icon(Icons.alternate_email),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: newPasswordController,
-                obscureText: obscureNew,
-                decoration: InputDecoration(
-                  labelText: 'New Password',
-                  suffixIcon: IconButton(
-                    tooltip: obscureNew ? 'Show password' : 'Hide password',
-                    onPressed: () => setStateDialog(() => obscureNew = !obscureNew),
-                    icon: Icon(obscureNew ? Icons.visibility_off : Icons.visibility),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: confirmPasswordController,
-                obscureText: obscureConfirm,
-                decoration: InputDecoration(
-                  labelText: 'Confirm Password',
-                  suffixIcon: IconButton(
-                    tooltip: obscureConfirm ? 'Show password' : 'Hide password',
-                    onPressed: () => setStateDialog(() => obscureConfirm = !obscureConfirm),
-                    icon: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () async {
-                final messenger = MyApp.scaffoldMessengerKey.currentState ??
-                    ScaffoldMessenger.of(context);
-                final dialogNavigator = Navigator.of(dialogContext);
-                final username = usernameController.text.trim();
-                final newPassword = newPasswordController.text;
-                final confirmPassword = confirmPasswordController.text;
+        builder: (context, setStateDialog) {
+          final messenger = MyApp.scaffoldMessengerKey.currentState ??
+              ScaffoldMessenger.of(context);
 
-                if (username.isEmpty || newPassword.isEmpty || confirmPassword.isEmpty) {
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('Please fill all fields')),
-                  );
-                  return;
-                }
-                if (newPassword != confirmPassword) {
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('Password confirmation does not match')),
-                  );
-                  return;
-                }
-                if (!_isStrongPassword(newPassword)) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        r'Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one digit, and one special character (!@#$%^&*)',
+          void startCooldown(int secs) {
+            cooldownSec = secs;
+            cooldownTimer?.cancel();
+            cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+              if (!(ModalRoute.of(context)?.isActive ?? false)) {
+                t.cancel();
+                return;
+              }
+              final next = cooldownSec - 1;
+              if (next <= 0) {
+                cooldownSec = 0;
+                t.cancel();
+              } else {
+                cooldownSec = next;
+              }
+              setStateDialog(() {});
+            });
+          }
+
+          Future<void> sendCode() async {
+            final email = emailController.text.trim().toLowerCase();
+            if (email.isEmpty) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter your email first')),
+              );
+              return;
+            }
+            if (!emailRegex.hasMatch(email)) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter a valid email address')),
+              );
+              return;
+            }
+            setStateDialog(() => sending = true);
+            try {
+              final res = await ApiService.requestPasswordResetOtp(email);
+              if (!context.mounted) return;
+              resetRef = res['ref']?.toString();
+              setStateDialog(() {
+                sending = false;
+                stage = 2;
+              });
+              startCooldown(60);
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text(
+                    res['message']?.toString() ??
+                        'We emailed a 6-digit code to $email. Enter it below.',
+                  ),
+                ),
+              );
+            } catch (e) {
+              if (!context.mounted) return;
+              setStateDialog(() => sending = false);
+              messenger.showSnackBar(SnackBar(content: Text(friendlyResetError(e))));
+            }
+          }
+
+          void continueToNewPassword() {
+            final otp = otpController.text.trim();
+            final currentPassword = currentPasswordController.text;
+            if (otp.length != 6) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter the 6-digit code sent to your email')),
+              );
+              return;
+            }
+            if (currentPassword.isEmpty) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter your current password')),
+              );
+              return;
+            }
+            setStateDialog(() => stage = 3);
+          }
+
+          Future<void> submitReset() async {
+            final dialogNavigator = Navigator.of(dialogContext);
+            final email = emailController.text.trim().toLowerCase();
+            final otp = otpController.text.trim();
+            final currentPassword = currentPasswordController.text;
+            final newPassword = newPasswordController.text;
+            final confirmPassword = confirmPasswordController.text;
+
+            if (!emailRegex.hasMatch(email)) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter a valid email address')),
+              );
+              return;
+            }
+            if (otp.length != 6) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter the 6-digit code sent to your email')),
+              );
+              return;
+            }
+            if (currentPassword.isEmpty) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Enter your current password')),
+              );
+              return;
+            }
+            if (newPassword.isEmpty || confirmPassword.isEmpty) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Please fill all fields')),
+              );
+              return;
+            }
+            if (newPassword != confirmPassword) {
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Password confirmation does not match')),
+              );
+              return;
+            }
+            if (!_isStrongPassword(newPassword)) {
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    r'Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one digit, and one special character (!@#$%^&*)',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            setStateDialog(() => submitting = true);
+            try {
+              await ApiService.resetPassword(
+                email,
+                newPassword,
+                currentPassword: currentPassword,
+                resetOtp: otp,
+                resetOtpRef: resetRef ?? '',
+              );
+              cooldownTimer?.cancel();
+              if (!context.mounted) return;
+              dialogNavigator.pop();
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Password reset successful. You can sign in now.')),
+              );
+            } catch (e) {
+              if (!context.mounted) return;
+              setStateDialog(() => submitting = false);
+              messenger.showSnackBar(
+                SnackBar(content: Text(friendlyResetError(e))),
+              );
+            }
+          }
+
+          return AlertDialog(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Reset Password'),
+                const SizedBox(height: 4),
+                Text(
+                  stepLabel(stage),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (stage == 1) ...[
+                    TextField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      autocorrect: false,
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        prefixIcon: Icon(Icons.alternate_email),
                       ),
                     ),
-                  );
-                  return;
-                }
-
-                try {
-                  await ApiService.resetPassword(username, newPassword);
-                  dialogNavigator.pop();
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('Password reset successful. You can login now.')),
-                  );
-                } catch (e) {
-                  messenger.showSnackBar(
-                    SnackBar(content: Text(e.toString())),
-                  );
-                }
-              },
-              child: const Text('Reset'),
+                    const SizedBox(height: 10),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'We will email a 6-digit verification code to the address registered on your account.',
+                        style: TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: sending ? null : sendCode,
+                        icon: sending
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send_outlined, size: 18),
+                        label: Text(sending ? 'Sending…' : 'Send verification code'),
+                      ),
+                    ),
+                  ] else if (stage == 2) ...[
+                    Text(
+                      'We sent a 6-digit code to ${emailController.text.trim().toLowerCase()}. Enter the code and your current password to continue.',
+                      style: const TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: otpController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'Verification code (OTP)',
+                        prefixIcon: Icon(Icons.password_outlined),
+                        counterText: '',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: currentPasswordController,
+                      obscureText: obscureCurrent,
+                      decoration: InputDecoration(
+                        labelText: 'Current Password',
+                        suffixIcon: IconButton(
+                          tooltip: obscureCurrent ? 'Show password' : 'Hide password',
+                          onPressed: () => setStateDialog(() => obscureCurrent = !obscureCurrent),
+                          icon: Icon(obscureCurrent ? Icons.visibility_off : Icons.visibility),
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: (sending || cooldownSec > 0) ? null : sendCode,
+                        child: Text(
+                          cooldownSec > 0 ? 'Resend code in ${cooldownSec}s' : 'Resend code',
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    Text(
+                      'Choose a strong new password for ${emailController.text.trim().toLowerCase()}.',
+                      style: const TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: newPasswordController,
+                      obscureText: obscureNew,
+                      decoration: InputDecoration(
+                        labelText: 'New Password',
+                        suffixIcon: IconButton(
+                          tooltip: obscureNew ? 'Show password' : 'Hide password',
+                          onPressed: () => setStateDialog(() => obscureNew = !obscureNew),
+                          icon: Icon(obscureNew ? Icons.visibility_off : Icons.visibility),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: confirmPasswordController,
+                      obscureText: obscureConfirm,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm Password',
+                        suffixIcon: IconButton(
+                          tooltip: obscureConfirm ? 'Show password' : 'Hide password',
+                          onPressed: () => setStateDialog(() => obscureConfirm = !obscureConfirm),
+                          icon: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: submitting ? null : () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              if (stage == 2)
+                TextButton(
+                  onPressed: sending ? null : () => setStateDialog(() => stage = 1),
+                  child: const Text('Back'),
+                ),
+              if (stage == 3)
+                TextButton(
+                  onPressed: submitting ? null : () => setStateDialog(() => stage = 2),
+                  child: const Text('Back'),
+                ),
+              if (stage == 2)
+                ElevatedButton(
+                  onPressed: sending ? null : continueToNewPassword,
+                  child: const Text('Continue'),
+                ),
+              if (stage == 3)
+                ElevatedButton(
+                  onPressed: submitting ? null : submitReset,
+                  child: submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Reset Password'),
+                ),
+            ],
+          );
+        },
       ),
     );
+    cooldownTimer?.cancel();
   }
 }

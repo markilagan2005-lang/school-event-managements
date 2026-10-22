@@ -129,6 +129,26 @@ const eventIsVisibleToStudent = (event, studentCourse) => {
   return courses.includes(sc);
 };
 
+// Irregular students may belong to several courses. Regular students have exactly
+// one. This resolves the canonical list of courses a student is enrolled in, falling
+// back to the single `course` field when no `courses` array is stored.
+const studentCourseList = (user) => {
+  if (!user) return [];
+  const list = Array.isArray(user.courses)
+    ? user.courses.map((c) => String(c).trim()).filter((c) => ALL_COURSES_SET.has(c))
+    : [];
+  if (list.length > 0) return list;
+  const single = String(user.course || '').trim();
+  return ALL_COURSES_SET.has(single) ? [single] : [];
+};
+
+// An event is visible to a student when ANY of their enrolled courses matches.
+const eventIsVisibleToAnyCourse = (event, courses) => {
+  const list = Array.isArray(courses) ? courses : [];
+  if (list.length === 0) return eventIsVisibleToStudent(event, '');
+  return list.some((c) => eventIsVisibleToStudent(event, c));
+};
+
 const eventApplyDefaults = (e) => {
   if (e.allCourses !== true && e.allCourses !== false) e.allCourses = true;
   if (!Array.isArray(e.courses)) {
@@ -523,6 +543,14 @@ const hasDuplicateStudentId = (users, studentId, exceptUserId = null) => {
     (u) => u.id !== exceptUserId && normalizeStudentId(u.studentId) === normalized,
   );
 };
+const normalizeProfessorId = (value) => String(value || '').trim().toLowerCase();
+const hasDuplicateProfessorId = (users, professorId, exceptUserId = null) => {
+  const normalized = normalizeProfessorId(professorId);
+  if (!normalized) return false;
+  return users.some(
+    (u) => u.id !== exceptUserId && normalizeProfessorId(u.professorId) === normalized,
+  );
+};
 const hasDuplicateUserId = (users, userId, exceptUserId = null) => {
   const normalized = String(userId || '').trim();
   if (!normalized) return false;
@@ -558,7 +586,10 @@ const toPublicUser = (u) => ({
   role: u.role,
   fullName: u.fullName || '',
   studentId: u.studentId || '',
+  professorId: u.professorId || '',
+  studentType: u.studentType === 'irregular' ? 'irregular' : 'regular',
   course: u.course || '',
+  courses: Array.isArray(u.courses) ? [...u.courses] : [],
   section: u.section || '',
   isApproved: isFacultyApproved(u),
   isVerified: u.isVerified || false,
@@ -669,13 +700,20 @@ app.get('/', (req, res) => {
 
 // Register
 app.post('/api/register', async (req, res) => {
-  const { username, password, role, fullName, studentId, course, section, email,
+  const { username, password, role, fullName, studentId, professorId, studentType, course, courses, section, email,
           registrationOtp, registrationOtpRef, handledCourses } = req.body;
   const users = loadData(usersFile);
 
   if (!['student', 'faculty'].includes(role)) {
     return res.status(400).json({ error: 'Public registration is only available for Student and Professor accounts.' });
   }
+
+  // Students are classified as Regular (single course) or Irregular (multiple courses).
+  const requestedStudentType = String(studentType || '').trim().toLowerCase() === 'irregular' ? 'irregular' : 'regular';
+  const requestedCourses = Array.isArray(courses) ? courses : [];
+  const resolvedCourses = requestedStudentType === 'irregular'
+    ? normalizeCourses(requestedCourses, { allowEmpty: true })
+    : (ALL_COURSES_SET.has(String(course || '').trim()) ? [String(course).trim()] : []);
 
   const identifier = role === 'student' ? email : username;
   if (!identifier || !password) {
@@ -701,8 +739,15 @@ app.post('/api/register', async (req, res) => {
     if (findUserByHandle(users, normalizedEmail)) {
       return res.status(409).json({ error: 'This email is already registered. Try logging in or use "Reset Password".' });
     }
-    if (!fullName || !studentId || !course || !section) {
-      return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
+    if (!fullName || !studentId || !section) {
+      return res.status(400).json({ error: 'Full name, student ID, and section are required' });
+    }
+    if (resolvedCourses.length === 0) {
+      return res.status(400).json({
+        error: requestedStudentType === 'irregular'
+          ? 'Select at least one course for the irregular student.'
+          : 'Select a course.',
+      });
     }
     // VALIDATE pre-registration OTP (consume it — one-time use)
     const check = await consumeRegistrationOtp(
@@ -736,6 +781,9 @@ app.post('/api/register', async (req, res) => {
   if (hasDuplicateStudentId(users, studentId)) {
     return res.status(400).json({ error: 'This ID is already have' });
   }
+  if (role === 'faculty' && hasDuplicateProfessorId(users, professorId)) {
+    return res.status(400).json({ error: 'This Professor ID is already in use' });
+  }
 
   const hashedPassword = await hashPassword(password);
   const normalizedEmail = role === 'student'
@@ -755,7 +803,10 @@ app.post('/api/register', async (req, res) => {
     role,
     fullName: fullName || '',
     studentId: studentId || '',
-    course: course || '',
+    professorId: role === 'faculty' ? String(professorId || '').trim() : '',
+    studentType: role === 'student' ? requestedStudentType : 'regular',
+    course: role === 'student' ? (resolvedCourses[0] || '') : '',
+    courses: role === 'student' ? resolvedCourses : [],
     section: section || '',
     isApproved: role === 'faculty' ? false : true,
     // STUDENT email was ALREADY PROVEN via pre-registration OTP before we got here.
@@ -832,11 +883,13 @@ const findUserByHandle = (users, handle, mode) => {
   const findByUsername = () => users.find(u => String(u.username || '').toLowerCase() === h) || null;
   const findByEmail = () => users.find(u => u && u.email && String(u.email).toLowerCase() === h) || null;
   const findByStudentId = () => users.find(u => u && u.studentId && String(u.studentId).toLowerCase() === h) || null;
+  const findByProfessorId = () => users.find(u => u && u.professorId && String(u.professorId).toLowerCase() === h) || null;
   if (m === 'username') return findByUsername();
   if (m === 'email') return findByEmail();
   if (m === 'studentid') return findByStudentId();
-  // auto (backward compat): check all three OR'd
-  return findByUsername() || findByEmail() || findByStudentId() || null;
+  if (m === 'professorid') return findByProfessorId();
+  // auto (backward compat): check all OR'd
+  return findByUsername() || findByEmail() || findByStudentId() || findByProfessorId() || null;
 };
 
 // --- Pre-registration email OTP (students MUST prove email ownership BEFORE account creation) ---
@@ -1074,11 +1127,92 @@ app.post('/api/resend-otp', async (req, res) => {
   });
 });
 
-// Self-service password reset from login screen (non-admin only).
+// Step 1 of self-service password reset: verify the user's email address and
+// email a 6-digit OTP to that exact address.
+app.post('/api/request-password-reset-otp', async (req, res) => {
+  const { email } = req.body;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: 'Enter a valid email address' });
+  }
+
+  const users = loadData(usersFile);
+  const user = findUserByHandle(users, normalizedEmail, 'email');
+  const idx = user ? users.findIndex(u => u.id === user.id) : -1;
+  if (idx === -1) return res.status(404).json({ error: 'Account not found' });
+  if (users[idx].role === 'admin') {
+    return res.status(403).json({ error: 'Admin password reset is restricted. Use admin panel.' });
+  }
+
+  const accountEmail = String(users[idx].email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail)) {
+    return res.status(400).json({ error: 'This account has no valid email on file. Contact the school admin.' });
+  }
+  if (accountEmail !== normalizedEmail) {
+    return res.status(404).json({ error: 'Account not found' });
+  }
+
+  const now = Date.now();
+  const lastSent = parseInt(users[idx].resetOtpLastSent || '0', 10);
+  if (lastSent && (now - lastSent) < OTP_RESEND_COOLDOWN_MS) {
+    const waitSec = Math.max(1, Math.ceil((OTP_RESEND_COOLDOWN_MS - (now - lastSent)) / 1000));
+    return res.status(429).json({
+      error: `Please wait ${waitSec}s before requesting a new code.`,
+      retryAfterSec: waitSec,
+    });
+  }
+
+  const otp = generateOtp();
+  const ref = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  let mailResult = { ok: false, reason: 'skipped' };
+  try {
+    mailResult = await sendEmailCode({
+      toEmail: accountEmail,
+      otp,
+      username: users[idx].fullName || users[idx].username,
+    });
+  } catch (err) {
+    console.error('[request-password-reset-otp][mail] Error:', err);
+    mailResult = { ok: false, reason: 'exception' };
+  }
+
+  if (!mailResult.ok) {
+    return res.status(503).json({
+      error: 'We could not send the verification code right now. Please try again later or contact the school admin.',
+      reason: mailResult.reason || 'mail-send-failed',
+    });
+  }
+
+  users[idx].resetOtp = otp;
+  users[idx].resetOtpRef = ref;
+  users[idx].resetOtpExpiry = now + OTP_EXPIRY_MS;
+  users[idx].resetOtpLastSent = now;
+  users[idx].resetOtpAttempts = 0;
+  saveData(usersFile, users);
+
+  return res.json({
+    ok: true,
+    ref,
+    expiresInMs: OTP_EXPIRY_MS,
+    email: accountEmail,
+    emailSent: true,
+    message: 'We emailed a 6-digit code. Enter it below to continue.',
+  });
+});
+
+// Self-service password reset from login screen (non-admin only). Requires the OTP
+// emailed by /api/request-password-reset-otp to prove ownership of the account email.
 app.post('/api/reset-password', async (req, res) => {
-  const { username, newPassword } = req.body;
-  if (!username || !newPassword) {
-    return res.status(400).json({ error: 'Username/email and new password are required' });
+  const { email, currentPassword, newPassword, resetOtp, resetOtpRef } = req.body;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail || !currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Email, current password, and new password are required' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: 'Enter a valid email address' });
   }
   if (!isStrongPassword(newPassword)) {
     return res.status(400).json({
@@ -1087,15 +1221,57 @@ app.post('/api/reset-password', async (req, res) => {
   }
 
   const users = loadData(usersFile);
-  const user = findUserByHandle(users, username);
+  const user = findUserByHandle(users, normalizedEmail, 'email');
   const idx = user ? users.findIndex(u => u.id === user.id) : -1;
   if (idx === -1) return res.status(404).json({ error: 'Account not found' });
   if (users[idx].role === 'admin') {
     return res.status(403).json({ error: 'Admin password reset is restricted. Use admin panel.' });
   }
+  const currentPasswordOk = await comparePassword(String(currentPassword), String(users[idx].password || ''));
+  if (!currentPasswordOk) {
+    return res.status(401).json({ error: 'Current password is incorrect.' });
+  }
 
-  const hashedPassword = await hashPassword(newPassword);
-  users[idx].password = hashedPassword;
+  const candidate = String(resetOtp || '').trim();
+  const ref = String(resetOtpRef || '').trim();
+  if (!/^\d{6}$/.test(candidate)) {
+    return res.status(400).json({ error: 'Enter the 6-digit code sent to your email.' });
+  }
+  const rec = users[idx];
+  if (!rec.resetOtp || (ref && rec.resetOtpRef !== ref)) {
+    return res.status(400).json({ error: 'No reset code is pending. Tap "Send code" first.' });
+  }
+  const expiresAt = parseInt(rec.resetOtpExpiry || '0', 10);
+  if (!expiresAt || Date.now() > expiresAt) {
+    delete rec.resetOtp;
+    delete rec.resetOtpRef;
+    delete rec.resetOtpExpiry;
+    delete rec.resetOtpLastSent;
+    delete rec.resetOtpAttempts;
+    saveData(usersFile, users);
+    return res.status(410).json({ error: 'This code has expired. Request a new one.' });
+  }
+  rec.resetOtpAttempts = Number(rec.resetOtpAttempts || 0) + 1;
+  if (String(candidate) !== String(rec.resetOtp)) {
+    if (rec.resetOtpAttempts >= 10) {
+      delete rec.resetOtp;
+      delete rec.resetOtpRef;
+      delete rec.resetOtpExpiry;
+      delete rec.resetOtpLastSent;
+      delete rec.resetOtpAttempts;
+      saveData(usersFile, users);
+      return res.status(401).json({ error: 'Too many wrong attempts. Request a new code and try again.' });
+    }
+    saveData(usersFile, users);
+    return res.status(401).json({ error: 'Incorrect code. Double-check your email (and Spam folder).' });
+  }
+
+  delete rec.resetOtp;
+  delete rec.resetOtpRef;
+  delete rec.resetOtpExpiry;
+  delete rec.resetOtpLastSent;
+  delete rec.resetOtpAttempts;
+  rec.password = await hashPassword(newPassword);
   saveData(usersFile, users);
   return res.json({ message: 'Password reset successful' });
 });
@@ -1129,9 +1305,10 @@ app.post('/api/login', async (req, res) => {
   }
 
   if (!user) {
-    let msg = 'Student ID, email, or username not found';
+    let msg = 'Student ID, Professor ID, email, or username not found';
     if (mode === 'email') msg = 'No account found with that email address';
     else if (mode === 'studentId') msg = 'No account found with that Student ID';
+    else if (mode === 'professorId') msg = 'No account found with that Professor ID';
     else if (mode === 'username') msg = 'Username not found';
     return res.status(401).json({ error: msg });
   }
@@ -1212,10 +1389,10 @@ app.get('/api/events', authenticateToken, (req, res) => {
   const users = loadData(usersFile);
   const account = users.find((u) => u.id === req.user.id);
   if (account && account.role === 'student') {
-    const studentCourse = account.course || '';
+    const studentCourses = studentCourseList(account);
     const visibleIds = new Set();
     for (const e of events) {
-      if (eventIsVisibleToStudent(e, studentCourse)) {
+      if (eventIsVisibleToAnyCourse(e, studentCourses)) {
         visibleIds.add(e.id);
         if (e.isCategory !== true && e.parentId) visibleIds.add(e.parentId);
       }
@@ -1513,22 +1690,23 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
   const account = users.find(u => u.id === req.user.id) || {};
   const accountStudentId = account.studentId || account.username || req.user.username;
   const accountName = account.fullName || account.username || req.user.username;
-  const accountCourse = account.course || '';
   const accountSection = account.section || '';
 
   const studentId = attendeeId || accountStudentId;
   const studentName = attendeeId ? String(attendeeId) : accountName;
-  let studentCourse = accountCourse;
+  let studentAccount = account;
   let studentSection = accountSection;
   if (attendeeId) {
     const s = users.find(u => u.role === 'student' && (u.studentId === attendeeId || u.username === attendeeId));
     if (s) {
-      studentCourse = s.course || '';
+      studentAccount = s;
       studentSection = s.section || '';
     }
   }
+  const studentCourses = studentCourseList(studentAccount);
+  const studentCourse = studentCourses[0] || '';
 
-  if (!eventIsVisibleToStudent(event, studentCourse)) {
+  if (!eventIsVisibleToAnyCourse(event, studentCourses)) {
     const allowed = Array.isArray(event.courses) ? event.courses.slice().sort().join(', ') : '';
     const msg = allowed
       ? `This event is only for ${allowed}. Your course (${studentCourse || 'unassigned'}) cannot scan this QR.`
@@ -1625,20 +1803,9 @@ app.get('/api/attendance', authenticateToken, (req, res) => {
     return res.json(all.filter(a => a.userId === req.user.id || a.studentId === req.user.username));
   }
   if (req.user.role === 'faculty') {
-    // Professor sees:
-    // 1) open check-ins handled by this professor OR student's course is in handledCourses
-    // 2) closed records checked out by this professor OR student's course is in handledCourses
-    const allowed = Array.isArray(req.user.handledCourses) ? req.user.handledCourses : [];
-    const allowedSet = new Set(allowed);
-    return res.json(
-      all.filter(a => {
-        const courseOk = allowedSet.size === 0 ? false : allowedSet.has(String(a.studentCourse || '').trim());
-        const facultyOwnershipOk = !a.checkOutAt
-          ? a.checkedInByFacultyId === req.user.id
-          : a.checkedOutByFacultyId === req.user.id;
-        return courseOk || facultyOwnershipOk;
-      }),
-    );
+    // A student's attendance is only visible to the professor who checked them
+    // in. Course assignment alone no longer grants access to a student's record.
+    return res.json(all.filter(a => a.checkedInByFacultyId === req.user.id));
   }
   res.json(all);
 });
@@ -1720,14 +1887,18 @@ app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-  const { username, password, role, fullName, studentId, course, section, handledCourses } = req.body;
+  const { username, password, role, fullName, studentId, professorId, studentType, course, courses, section, handledCourses } = req.body;
   const users = loadData(usersFile);
   if (!username || !password || !['student','admin','faculty'].includes(role)) {
     return res.status(400).json({ error: 'Invalid payload' });
   }
+  const requestedStudentType = String(studentType || '').trim().toLowerCase() === 'irregular' ? 'irregular' : 'regular';
+  const resolvedCourses = requestedStudentType === 'irregular'
+    ? normalizeCourses(Array.isArray(courses) ? courses : [], { allowEmpty: true })
+    : (ALL_COURSES_SET.has(String(course || '').trim()) ? [String(course).trim()] : []);
   if (role === 'student') {
-    if (!fullName || !studentId || !course || !section) {
-      return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
+    if (!fullName || !studentId || !section || resolvedCourses.length === 0) {
+      return res.status(400).json({ error: 'Full name, Student ID, course(s), and section are required' });
     }
   }
   if (role === 'faculty') {
@@ -1735,12 +1906,18 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
     if (normalizedHC.length === 0) {
       return res.status(400).json({ error: 'At least one handled course is required for a Professor account.' });
     }
+    if (!String(professorId || '').trim()) {
+      return res.status(400).json({ error: 'A Professor ID is required for a Professor account.' });
+    }
   }
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
     return res.status(400).json({ error: 'Username exists' });
   }
   if (hasDuplicateStudentId(users, studentId)) {
     return res.status(400).json({ error: 'This ID is already have' });
+  }
+  if (role === 'faculty' && hasDuplicateProfessorId(users, professorId)) {
+    return res.status(400).json({ error: 'This Professor ID is already in use' });
   }
   const hashedPassword = await hashPassword(String(password));
   const u = {
@@ -1750,7 +1927,10 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
     role,
     fullName: fullName || '',
     studentId: studentId || '',
-    course: course || '',
+    professorId: role === 'faculty' ? String(professorId || '').trim() : '',
+    studentType: role === 'student' ? requestedStudentType : 'regular',
+    course: role === 'student' ? (resolvedCourses[0] || '') : '',
+    courses: role === 'student' ? resolvedCourses : [],
     section: section || '',
     isApproved: true,
     isVerified: true,
@@ -1849,7 +2029,15 @@ app.patch('/api/users/:id', authenticateToken, async (req, res) => {
 
   if (fullName != null) next.fullName = String(fullName).trim();
   if (studentId != null) next.studentId = String(studentId).trim();
+  if (professorId != null) next.professorId = String(professorId).trim();
+  if (studentType != null) {
+    next.studentType = String(studentType).trim().toLowerCase() === 'irregular' ? 'irregular' : 'regular';
+  }
   if (course != null) next.course = String(course).trim();
+  if (courses != null) {
+    next.courses = normalizeCourses(Array.isArray(courses) ? courses : [], { allowEmpty: true });
+    if (next.courses.length > 0 && !next.course) next.course = next.courses[0];
+  }
   if (section != null) next.section = String(section).trim();
   if (password != null) {
     if (!String(password)) return res.status(400).json({ error: 'Password is required' });
@@ -1910,10 +2098,15 @@ app.patch('/api/users/:id', authenticateToken, async (req, res) => {
   if (hasDuplicateStudentId(users, next.studentId, current.id)) {
     return res.status(400).json({ error: 'This ID is already have' });
   }
+  if (finalRole === 'faculty' && hasDuplicateProfessorId(users, next.professorId, current.id)) {
+    return res.status(400).json({ error: 'This Professor ID is already in use' });
+  }
 
   if (next.role === 'student') {
-    if (!next.fullName || !next.studentId || !next.course || !next.section) {
-      return res.status(400).json({ error: 'Full name, student ID, course, and section are required' });
+    const hasCourse = (next.course && String(next.course).trim()) ||
+      (Array.isArray(next.courses) && next.courses.length > 0);
+    if (!next.fullName || !next.studentId || !hasCourse || !next.section) {
+      return res.status(400).json({ error: 'Full name, student ID, course(s), and section are required' });
     }
   }
   if (finalRole === 'faculty') {
