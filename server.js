@@ -551,6 +551,7 @@ const hasDuplicateProfessorId = (users, professorId, exceptUserId = null) => {
     (u) => u.id !== exceptUserId && normalizeProfessorId(u.professorId) === normalized,
   );
 };
+const isDigitsOnlyId = (value) => /^\d+$/.test(String(value || '').trim());
 const hasDuplicateUserId = (users, userId, exceptUserId = null) => {
   const normalized = String(userId || '').trim();
   if (!normalized) return false;
@@ -583,6 +584,7 @@ const isStrongPassword = (password) => {
 const toPublicUser = (u) => ({
   id: u.id,
   username: u.username,
+  email: u.email || '',
   role: u.role,
   fullName: u.fullName || '',
   studentId: u.studentId || '',
@@ -736,11 +738,14 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Enter the 6-digit code sent to your email first. If you did not get one, tap "Send verification code".' });
     }
     // Duplicate email check BEFORE consuming OTP
-    if (findUserByHandle(users, normalizedEmail)) {
+    if (findUserByEmail(users, normalizedEmail)) {
       return res.status(409).json({ error: 'This email is already registered. Try logging in or use "Reset Password".' });
     }
     if (!fullName || !studentId || !section) {
       return res.status(400).json({ error: 'Full name, student ID, and section are required' });
+    }
+    if (!isDigitsOnlyId(studentId)) {
+      return res.status(400).json({ error: 'Student ID must contain numbers only.' });
     }
     if (resolvedCourses.length === 0) {
       return res.status(400).json({
@@ -892,6 +897,19 @@ const findUserByHandle = (users, handle, mode) => {
   return findByUsername() || findByEmail() || findByStudentId() || findByProfessorId() || null;
 };
 
+// Resolve the single account bound to an email address.
+// Students register with an email, which is stored in BOTH `email` and `username`,
+// so password reset by email always targets the same record they log in with via
+// their Student ID. Checking `username` too covers legacy rows saved before the
+// email field existed.
+const findUserByEmail = (users, emailRaw) => {
+  const needle = String(emailRaw || '').trim().toLowerCase();
+  if (!needle) return null;
+  return users.find(u => u && String(u.email || '').trim().toLowerCase() === needle)
+    || users.find(u => u && String(u.username || '').trim().toLowerCase() === needle)
+    || null;
+};
+
 // --- Pre-registration email OTP (students MUST prove email ownership BEFORE account creation) ---
 
 // Store a new pending registration OTP for a given email.
@@ -986,7 +1004,7 @@ app.post('/api/send-registration-otp', async (req, res) => {
   }
   // Duplicate check: if email already belongs to a registered user, refuse to send.
   const users = loadData(usersFile);
-  if (findUserByHandle(users, normalizedEmail)) {
+  if (findUserByEmail(users, normalizedEmail)) {
     return res.status(409).json({ error: 'This email is already registered. Try logging in or use "Reset Password".' });
   }
   const stored = await storeRegistrationOtp(normalizedEmail);
@@ -1140,15 +1158,26 @@ app.post('/api/request-password-reset-otp', async (req, res) => {
   }
 
   const users = loadData(usersFile);
-  const user = findUserByHandle(users, normalizedEmail, 'email');
+  const user = findUserByEmail(users, normalizedEmail);
   const idx = user ? users.findIndex(u => u.id === user.id) : -1;
   if (idx === -1) return res.status(404).json({ error: 'Account not found' });
   if (users[idx].role === 'admin') {
     return res.status(403).json({ error: 'Admin password reset is restricted. Use admin panel.' });
   }
 
-  const accountEmail = String(users[idx].email || '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail)) {
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  let accountEmail = String(users[idx].email || '').trim().toLowerCase();
+  // Legacy rows may keep the registration email only in `username`; adopt it so the
+  // account stays linked and future resets keep working.
+  if (!emailPattern.test(accountEmail)) {
+    const usernameAsEmail = String(users[idx].username || '').trim().toLowerCase();
+    if (emailPattern.test(usernameAsEmail)) {
+      accountEmail = usernameAsEmail;
+      users[idx].email = accountEmail;
+      saveData(usersFile, users);
+    }
+  }
+  if (!emailPattern.test(accountEmail)) {
     return res.status(400).json({ error: 'This account has no valid email on file. Contact the school admin.' });
   }
   if (accountEmail !== normalizedEmail) {
@@ -1206,10 +1235,10 @@ app.post('/api/request-password-reset-otp', async (req, res) => {
 // Self-service password reset from login screen (non-admin only). Requires the OTP
 // emailed by /api/request-password-reset-otp to prove ownership of the account email.
 app.post('/api/reset-password', async (req, res) => {
-  const { email, currentPassword, newPassword, resetOtp, resetOtpRef } = req.body;
+  const { email, newPassword, resetOtp, resetOtpRef } = req.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
-  if (!normalizedEmail || !currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'Email, current password, and new password are required' });
+  if (!normalizedEmail || !newPassword) {
+    return res.status(400).json({ error: 'Email and new password are required' });
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     return res.status(400).json({ error: 'Enter a valid email address' });
@@ -1221,15 +1250,13 @@ app.post('/api/reset-password', async (req, res) => {
   }
 
   const users = loadData(usersFile);
-  const user = findUserByHandle(users, normalizedEmail, 'email');
+  // Resolve the ONE account bound to this email (also stored as the student's
+  // username). Updating it here also updates the password used for Student ID login.
+  const user = findUserByEmail(users, normalizedEmail);
   const idx = user ? users.findIndex(u => u.id === user.id) : -1;
   if (idx === -1) return res.status(404).json({ error: 'Account not found' });
   if (users[idx].role === 'admin') {
     return res.status(403).json({ error: 'Admin password reset is restricted. Use admin panel.' });
-  }
-  const currentPasswordOk = await comparePassword(String(currentPassword), String(users[idx].password || ''));
-  if (!currentPasswordOk) {
-    return res.status(401).json({ error: 'Current password is incorrect.' });
   }
 
   const candidate = String(resetOtp || '').trim();
@@ -1305,12 +1332,20 @@ app.post('/api/login', async (req, res) => {
   }
 
   if (!user) {
-    let msg = 'Student ID, Professor ID, email, or username not found';
-    if (mode === 'email') msg = 'No account found with that email address';
-    else if (mode === 'studentId') msg = 'No account found with that Student ID';
-    else if (mode === 'professorId') msg = 'No account found with that Professor ID';
-    else if (mode === 'username') msg = 'Username not found';
-    return res.status(401).json({ error: msg });
+    // Tell the user WHICH piece of login info is wrong so they know what to fix.
+    let msg = 'Incorrect email or Student ID.';
+    if (mode === 'email') msg = 'Incorrect email.';
+    else if (mode === 'studentId') msg = 'Incorrect Student ID.';
+    else if (mode === 'professorId') msg = 'Incorrect Professor ID.';
+    else if (mode === 'username') msg = 'Incorrect username.';
+    return res.status(401).json({ error: msg, reason: 'identifier' });
+  }
+  // Verify the password BEFORE the email-verification gate below, so a correct
+  // Student ID / email with a wrong password always reports "password is incorrect"
+  // instead of opening the verification dialog.
+  const passwordMatch = await comparePassword(String(password || ''), String(user.password || ''));
+  if (!passwordMatch) {
+    return res.status(401).json({ error: 'Incorrect password.', reason: 'password' });
   }
   if (user.isVerified !== true && user.role !== 'faculty') {
     // For STUDENT accounts: keep email-verification gate open. Try to auto-generate
@@ -1358,8 +1393,6 @@ app.post('/api/login', async (req, res) => {
       email: user.email || '',
     });
   }
-  const passwordMatch = await comparePassword(password, user.password);
-  if (!passwordMatch) return res.status(401).json({ error: 'Wrong password' });
   if (!isFacultyApproved(user)) {
     return res.status(403).json({
       error: 'Your professor account is still pending approval by an administrator. You will be able to sign in once the admin approves your registration.',
@@ -1887,18 +1920,34 @@ app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-  const { username, password, role, fullName, studentId, professorId, studentType, course, courses, section, handledCourses } = req.body;
+  const { username, password, role, fullName, studentId, professorId, studentType, course, courses, section, handledCourses, email } = req.body;
   const users = loadData(usersFile);
   if (!username || !password || !['student','admin','faculty'].includes(role)) {
     return res.status(400).json({ error: 'Invalid payload' });
+  }
+  if (!isStrongPassword(String(password))) {
+    return res.status(400).json({
+      error: 'Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one digit, and one special character (!@#$%^&*)',
+    });
   }
   const requestedStudentType = String(studentType || '').trim().toLowerCase() === 'irregular' ? 'irregular' : 'regular';
   const resolvedCourses = requestedStudentType === 'irregular'
     ? normalizeCourses(Array.isArray(courses) ? courses : [], { allowEmpty: true })
     : (ALL_COURSES_SET.has(String(course || '').trim()) ? [String(course).trim()] : []);
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const requiresEmail = role === 'student' || role === 'faculty';
+  if (requiresEmail && !normalizedEmail) {
+    return res.status(400).json({ error: 'Email is required for student and professor accounts.' });
+  }
+  if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: 'Enter a valid email address.' });
+  }
   if (role === 'student') {
     if (!fullName || !studentId || !section || resolvedCourses.length === 0) {
       return res.status(400).json({ error: 'Full name, Student ID, course(s), and section are required' });
+    }
+    if (!isDigitsOnlyId(studentId)) {
+      return res.status(400).json({ error: 'Student ID must contain numbers only.' });
     }
   }
   if (role === 'faculty') {
@@ -1909,9 +1958,15 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
     if (!String(professorId || '').trim()) {
       return res.status(400).json({ error: 'A Professor ID is required for a Professor account.' });
     }
+    if (!isDigitsOnlyId(professorId)) {
+      return res.status(400).json({ error: 'Professor ID must contain numbers only.' });
+    }
   }
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
     return res.status(400).json({ error: 'Username exists' });
+  }
+  if (normalizedEmail && findUserByEmail(users, normalizedEmail)) {
+    return res.status(400).json({ error: 'This email is already registered.' });
   }
   if (hasDuplicateStudentId(users, studentId)) {
     return res.status(400).json({ error: 'This ID is already have' });
@@ -1923,6 +1978,7 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
   const u = {
     id: uuidv4(),
     username,
+    email: normalizedEmail,
     password: hashedPassword,
     role,
     fullName: fullName || '',
@@ -1988,8 +2044,12 @@ app.patch('/api/users/:id', authenticateToken, async (req, res) => {
     role,
     fullName,
     studentId,
+    professorId,
+    studentType,
     course,
+    courses,
     section,
+    email,
     isApproved,
     isVerified: _isVerified,
     handledCourses,
@@ -2039,6 +2099,7 @@ app.patch('/api/users/:id', authenticateToken, async (req, res) => {
     if (next.courses.length > 0 && !next.course) next.course = next.courses[0];
   }
   if (section != null) next.section = String(section).trim();
+  if (email != null) next.email = String(email).trim().toLowerCase();
   if (password != null) {
     if (!String(password)) return res.status(400).json({ error: 'Password is required' });
     next.password = await hashPassword(String(password));
@@ -2101,6 +2162,20 @@ app.patch('/api/users/:id', authenticateToken, async (req, res) => {
   if (finalRole === 'faculty' && hasDuplicateProfessorId(users, next.professorId, current.id)) {
     return res.status(400).json({ error: 'This Professor ID is already in use' });
   }
+  if ((finalRole === 'student' || finalRole === 'faculty') && !String(next.email || '').trim()) {
+    return res.status(400).json({ error: 'Email is required for student and professor accounts.' });
+  }
+  if (String(next.email || '').trim()) {
+    const normalizedNextEmail = String(next.email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedNextEmail)) {
+      return res.status(400).json({ error: 'Enter a valid email address.' });
+    }
+    const existingByEmail = findUserByEmail(users, normalizedNextEmail);
+    if (existingByEmail && existingByEmail.id !== current.id) {
+      return res.status(400).json({ error: 'This email is already registered.' });
+    }
+    next.email = normalizedNextEmail;
+  }
 
   if (next.role === 'student') {
     const hasCourse = (next.course && String(next.course).trim()) ||
@@ -2108,8 +2183,17 @@ app.patch('/api/users/:id', authenticateToken, async (req, res) => {
     if (!next.fullName || !next.studentId || !hasCourse || !next.section) {
       return res.status(400).json({ error: 'Full name, student ID, course(s), and section are required' });
     }
+    if (!isDigitsOnlyId(next.studentId)) {
+      return res.status(400).json({ error: 'Student ID must contain numbers only.' });
+    }
   }
   if (finalRole === 'faculty') {
+    if (!String(next.professorId || '').trim()) {
+      return res.status(400).json({ error: 'A Professor ID is required for a Professor account.' });
+    }
+    if (!isDigitsOnlyId(next.professorId)) {
+      return res.status(400).json({ error: 'Professor ID must contain numbers only.' });
+    }
     // Only enforce handled-courses non-empty when the caller EXPLICITLY
     // included "handledCourses" in the request body. This means:
     //  - POST /api/users (admin creates new professor): always rejected (body has handledCourses),
